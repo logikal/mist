@@ -1,7 +1,8 @@
 import { data, Link } from "react-router";
 import type { Route } from "./+types/docs.$id";
 import { getAgentByName } from "agents";
-import { isValidDocumentId, DOCUMENT_TTL_MS } from "~/shared/constants";
+import { isValidDocumentId } from "~/shared/constants";
+import type { DocumentMetadata } from "~/shared/document-metadata";
 import { getCloudflare } from "~/lib/cloudflare.server";
 import { useYjsEditor } from "~/lib/useYjsEditor";
 import { DocumentProvider, useDocument } from "~/lib/DocumentContext";
@@ -32,21 +33,21 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   const { env } = getCloudflare(context);
   const stub = await getAgentByName(env.DocumentAgent, id);
   const res = await stub.fetch(new Request("https://do/"));
-  const { exists, createdAt } = (await res.json()) as {
+  const { exists, createdAt, metadata } = (await res.json()) as {
     exists: boolean;
     createdAt: number | null;
+    metadata: DocumentMetadata | null;
   };
 
   if (!exists) {
     throw data(null, { status: 404 });
   }
 
-  return { id, createdAt };
+  return { id, createdAt, metadata };
 }
 
-function formatRemainingTime(createdAt: number): string {
-  const elapsed = Date.now() - createdAt;
-  const remainingMs = DOCUMENT_TTL_MS - elapsed;
+export function formatExpirationTime(expiresAt: number, now = Date.now()): string {
+  const remainingMs = expiresAt - now;
   if (remainingMs <= 0) return "soon";
   const hours = Math.floor(remainingMs / (60 * 60 * 1000));
   if (hours >= 1) return `${hours}h`;
@@ -55,17 +56,23 @@ function formatRemainingTime(createdAt: number): string {
 }
 
 export default function DocumentPage({ loaderData }: Route.ComponentProps) {
-  const { id, createdAt } = loaderData;
+  const { id, createdAt, metadata } = loaderData;
   const yjs = useYjsEditor(id);
 
   return (
     <DocumentProvider docId={id} createdAt={createdAt} yjs={yjs}>
-      <DocumentLayout id={id} createdAt={createdAt} />
+      <DocumentLayout id={id} metadata={metadata} />
     </DocumentProvider>
   );
 }
 
-function DocumentLayout({ id, createdAt }: { id: string; createdAt: number | null }) {
+function DocumentLayout({
+  id,
+  metadata,
+}: {
+  id: string;
+  metadata: DocumentMetadata | null;
+}) {
   const {
     yjs,
     showPreview,
@@ -91,9 +98,9 @@ function DocumentLayout({ id, createdAt }: { id: string; createdAt: number | nul
         </Link>
         <div className="flex grow shrink-0 items-center px-4">
           <span className="font-mono font-bold">{id}</span>
-          {createdAt && (
+          {metadata?.retention.mode === "ttl" && (
             <span className="ml-2 whitespace-nowrap text-muted">
-              auto-deletes in {formatRemainingTime(createdAt)}
+              expires in {formatExpirationTime(metadata.retention.expiresAt)}
             </span>
           )}
         </div>
