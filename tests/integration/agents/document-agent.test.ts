@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as Y from "yjs";
 import * as awarenessProtocol from "y-protocols/awareness";
 import { DOCUMENT_TTL_MS, DOC_FORMAT_VERSION } from "~/shared/constants";
+import type { DocumentMetadata } from "~/shared/document-metadata";
 import { YjsProvider } from "~/lib/yjs-provider";
 
 /* ------------------------------------------------------------------ */
@@ -232,19 +233,54 @@ describe("DocumentAgent", () => {
     it("returns exists: false for a fresh agent", async () => {
       const res = await agent.onRequest(new Request("https://do/"));
       const body = await res.json();
-      expect(body).toEqual({ exists: false, createdAt: null });
+      expect(body).toEqual({ exists: false, createdAt: null, metadata: null });
     });
 
-    it("returns exists: true with createdAt after POST", async () => {
+    it("returns persistent metadata after POST", async () => {
       const before = Date.now();
       await agent.onRequest(new Request("https://do/", { method: "POST" }));
       const after = Date.now();
 
       const res = await agent.onRequest(new Request("https://do/"));
-      const body = (await res.json()) as { exists: boolean; createdAt: number };
+      const body = (await res.json()) as {
+        exists: boolean;
+        createdAt: number;
+        metadata: DocumentMetadata;
+      };
       expect(body.exists).toBe(true);
       expect(body.createdAt).toBeGreaterThanOrEqual(before);
       expect(body.createdAt).toBeLessThanOrEqual(after);
+      expect(body.metadata).toMatchObject({
+        id: "test-doc",
+        owner: { id: null, login: null, name: null },
+        retention: { mode: "persistent" },
+      });
+      expect(body.metadata.createdAt).toBe(body.createdAt);
+      expect(body.metadata.updatedAt).toBeGreaterThanOrEqual(body.metadata.createdAt);
+    });
+
+    it("derives ttl metadata for legacy documents with exists and createdAt keys", async () => {
+      const createdAt = Date.now() - 1_000;
+      mockSqlStore.set("exists", new Uint8Array([1]).buffer);
+      mockSqlStore.set(
+        "createdat",
+        new Uint8Array(new Float64Array([createdAt]).buffer).buffer,
+      );
+
+      const res = await agent.onRequest(new Request("https://do/"));
+      const body = (await res.json()) as {
+        exists: boolean;
+        metadata: DocumentMetadata;
+      };
+
+      expect(body.exists).toBe(true);
+      expect(body.metadata).toEqual({
+        id: "test-doc",
+        createdAt,
+        updatedAt: createdAt,
+        owner: { id: null, login: null, name: null },
+        retention: { mode: "ttl", expiresAt: createdAt + DOCUMENT_TTL_MS },
+      });
     });
   });
 
@@ -271,15 +307,49 @@ describe("DocumentAgent", () => {
       cleanup(client);
     });
 
-    it("sets auto-delete alarm at createdAt + DOCUMENT_TTL_MS", async () => {
-      const before = Date.now();
+    it("does not set an auto-delete alarm for persistent documents", async () => {
       await agent.onRequest(new Request("https://do/", { method: "POST" }));
+
+      expect(mockSetAlarm).not.toHaveBeenCalled();
+    });
+
+    it("sets an auto-delete alarm for ttl documents", async () => {
+      const before = Date.now();
+      await agent.onRequest(
+        new Request("https://do/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ retention: { mode: "ttl", ttlMs: DOCUMENT_TTL_MS } }),
+        }),
+      );
       const after = Date.now();
 
       expect(mockSetAlarm).toHaveBeenCalledOnce();
       const alarmTime = mockSetAlarm.mock.calls[0][0] as number;
       expect(alarmTime).toBeGreaterThanOrEqual(before + DOCUMENT_TTL_MS);
       expect(alarmTime).toBeLessThanOrEqual(after + DOCUMENT_TTL_MS);
+    });
+
+    it("captures owner metadata from forwarded identity headers", async () => {
+      await agent.onRequest(
+        new Request("https://do/", {
+          method: "POST",
+          headers: {
+            "x-mist-user-id": "u-123",
+            "x-mist-user-login": "sean@example.com",
+            "x-mist-user-name": "Sean",
+          },
+        }),
+      );
+
+      const res = await agent.onRequest(new Request("https://do/"));
+      const body = (await res.json()) as { metadata: DocumentMetadata };
+
+      expect(body.metadata.owner).toEqual({
+        id: "u-123",
+        login: "sean@example.com",
+        name: "Sean",
+      });
     });
 
     it("imports plain text content", async () => {
@@ -401,8 +471,23 @@ describe("DocumentAgent", () => {
   /* ================================================================ */
 
   describe("alarm", () => {
-    it("clears all SQL data", async () => {
+    it("does not clear persistent document data", async () => {
       await agent.onRequest(new Request("https://do/", { method: "POST" }));
+      expect(mockSqlStore.size).toBeGreaterThan(0);
+
+      await agent.alarm();
+
+      expect(mockSqlStore.size).toBeGreaterThan(0);
+    });
+
+    it("clears expired ttl document data", async () => {
+      await agent.onRequest(
+        new Request("https://do/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ retention: { mode: "ttl", expiresAt: Date.now() - 1 } }),
+        }),
+      );
       expect(mockSqlStore.size).toBeGreaterThan(0);
 
       await agent.alarm();
@@ -410,8 +495,29 @@ describe("DocumentAgent", () => {
       expect(mockSqlStore.size).toBe(0);
     });
 
-    it("closes all active connections with code 1000", async () => {
-      await agent.onRequest(new Request("https://do/", { method: "POST" }));
+    it("keeps unexpired ttl document data", async () => {
+      await agent.onRequest(
+        new Request("https://do/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ retention: { mode: "ttl", expiresAt: Date.now() + 60_000 } }),
+        }),
+      );
+      expect(mockSqlStore.size).toBeGreaterThan(0);
+
+      await agent.alarm();
+
+      expect(mockSqlStore.size).toBeGreaterThan(0);
+    });
+
+    it("closes active connections when an expired ttl document is deleted", async () => {
+      await agent.onRequest(
+        new Request("https://do/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ retention: { mode: "ttl", expiresAt: Date.now() - 1 } }),
+        }),
+      );
       const conn1 = createConnection();
       const conn2 = createConnection();
 
@@ -423,16 +529,26 @@ describe("DocumentAgent", () => {
       expect(conn2.closed).toBe(true);
     });
 
-    it("resets agent to fresh state (exists: false after alarm)", async () => {
-      await agent.onRequest(new Request("https://do/", { method: "POST" }));
+    it("resets expired ttl documents to fresh state", async () => {
+      await agent.onRequest(
+        new Request("https://do/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ retention: { mode: "ttl", expiresAt: Date.now() - 1 } }),
+        }),
+      );
       const client = connectYjsClient();
       cleanup(client);
 
       await agent.alarm();
 
       const res = await agent.onRequest(new Request("https://do/"));
-      const body = (await res.json()) as { exists: boolean };
+      const body = (await res.json()) as {
+        exists: boolean;
+        metadata: DocumentMetadata | null;
+      };
       expect(body.exists).toBe(false);
+      expect(body.metadata).toBeNull();
     });
   });
 

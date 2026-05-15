@@ -6,6 +6,13 @@ import * as awarenessProtocol from "y-protocols/awareness";
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import { MSG_SYNC, MSG_AWARENESS, DOCUMENT_TTL_MS, DOC_FORMAT_VERSION } from "../app/shared/constants";
+import {
+  createDocumentMetadata,
+  getOwnerFromHeaders,
+  isExpired,
+  normalizeRetention,
+  type DocumentMetadata,
+} from "../app/shared/document-metadata";
 
 /**
  * Durable Objects SQLite accepts Uint8Array for BLOB columns via the
@@ -16,9 +23,24 @@ function sqlBlob(data: Uint8Array): string {
   return data as unknown as string;
 }
 
+const jsonEncoder = new TextEncoder();
+const jsonDecoder = new TextDecoder();
+
+function jsonBlob(value: unknown): string {
+  return sqlBlob(jsonEncoder.encode(JSON.stringify(value)));
+}
+
+function parseJsonBlob<T>(value: ArrayBuffer): T {
+  return JSON.parse(jsonDecoder.decode(new Uint8Array(value))) as T;
+}
+
 class DocumentAgent extends Agent {
   private doc: Y.Doc | null = null;
   private awareness: awarenessProtocol.Awareness | null = null;
+
+  private get documentId(): string {
+    return (this as { name?: string }).name ?? "unknown";
+  }
 
   private ensureInitialised(): { doc: Y.Doc; awareness: awarenessProtocol.Awareness } {
     if (this.doc && this.awareness) {
@@ -53,9 +75,55 @@ class DocumentAgent extends Agent {
         INSERT INTO doc_state (key, value) VALUES ('state', ${sqlBlob(state)})
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
       `;
+      this.touchMetadata(Date.now());
     });
 
     return { doc: this.doc, awareness: this.awareness };
+  }
+
+  private readMetadata(): DocumentMetadata | null {
+    const rows = this.sql<{ value: ArrayBuffer }>`
+      SELECT value FROM doc_state WHERE key = 'metadata'
+    `;
+    if (rows.length > 0 && rows[0].value) {
+      return parseJsonBlob<DocumentMetadata>(rows[0].value);
+    }
+
+    const existsRows = this.sql<{ value: ArrayBuffer }>`
+      SELECT value FROM doc_state WHERE key = 'exists'
+    `;
+    if (existsRows.length === 0) {
+      return null;
+    }
+
+    const createdAtRows = this.sql<{ value: ArrayBuffer }>`
+      SELECT value FROM doc_state WHERE key = 'createdAt'
+    `;
+    const createdAt =
+      createdAtRows.length > 0
+        ? new Float64Array(createdAtRows[0].value)[0]
+        : Date.now();
+
+    return {
+      id: this.documentId,
+      createdAt,
+      updatedAt: createdAt,
+      owner: { id: null, login: null, name: null },
+      retention: { mode: "ttl", expiresAt: createdAt + DOCUMENT_TTL_MS },
+    };
+  }
+
+  private writeMetadata(metadata: DocumentMetadata): void {
+    this.sql`
+      INSERT INTO doc_state (key, value) VALUES ('metadata', ${jsonBlob(metadata)})
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `;
+  }
+
+  private touchMetadata(now: number): void {
+    const metadata = this.readMetadata();
+    if (!metadata) return;
+    this.writeMetadata({ ...metadata, updatedAt: now });
   }
 
   async onConnect(connection: Connection, _ctx: ConnectionContext) {
@@ -149,13 +217,15 @@ class DocumentAgent extends Agent {
   }
 
   override readonly alarm = async (): Promise<void> => {
-    // Auto-delete: remove all document data
+    const metadata = this.readMetadata();
+    if (!metadata || !isExpired(metadata.retention, Date.now())) {
+      return;
+    }
+
     this.sql`DELETE FROM doc_state`;
-    // Close all active WebSocket connections
     for (const conn of this.getConnections()) {
       conn.close(1000, "Document expired");
     }
-    // Clean up in-memory state
     this.doc?.destroy();
     this.doc = null;
     this.awareness = null;
@@ -163,12 +233,43 @@ class DocumentAgent extends Agent {
 
   async onRequest(request: Request) {
     if (request.method === "POST") {
-      // Create / initialise the document
       const { doc } = this.ensureInitialised();
-      this.sql`
-        INSERT INTO doc_state (key, value) VALUES ('exists', ${sqlBlob(new Uint8Array([1]))})
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value
-      `;
+      const contentType = request.headers.get("Content-Type") || "";
+      let body: {
+        content?: string;
+        threads?: unknown[];
+        onboarding?: boolean;
+        retention?: unknown;
+      } | null = null;
+
+      if (contentType.includes("application/json")) {
+        try {
+          body = await request.json() as {
+            content?: string;
+            threads?: unknown[];
+            onboarding?: boolean;
+            retention?: unknown;
+          };
+        } catch {
+          body = null;
+        }
+      }
+
+      const now = Date.now();
+      const existingMetadata = this.readMetadata();
+      const metadata =
+        existingMetadata ??
+        createDocumentMetadata({
+          id: this.documentId,
+          now,
+          owner: getOwnerFromHeaders(request.headers),
+          retention: normalizeRetention(body?.retention, now),
+        });
+      this.writeMetadata(metadata);
+
+      if (metadata.retention.mode === "ttl") {
+        await this.ctx.storage.setAlarm(metadata.retention.expiresAt);
+      }
 
       // Stamp doc format version in Yjs metadata
       const meta = doc.getMap<number>("meta");
@@ -176,19 +277,8 @@ class DocumentAgent extends Agent {
         meta.set("version", DOC_FORMAT_VERSION);
       }
 
-      // Store creation timestamp and set auto-delete alarm
-      const now = Date.now();
-      this.sql`
-        INSERT INTO doc_state (key, value) VALUES ('createdAt', ${sqlBlob(new Uint8Array(new Float64Array([now]).buffer))})
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value
-      `;
-      await this.ctx.storage.setAlarm(now + DOCUMENT_TTL_MS);
-
-      // If the request has a JSON body with content, populate the Yjs doc
-      const contentType = request.headers.get("Content-Type") || "";
-      if (contentType.includes("application/json")) {
+      if (body) {
         try {
-          const body = await request.json() as { content?: string; threads?: unknown[]; onboarding?: boolean };
           if (body.content) {
             // Parse CriticMarkup and apply as marks on XmlText
             const { parseCriticMarkupToContent } = await import("../app/lib/critic-parser");
@@ -231,7 +321,6 @@ class DocumentAgent extends Agent {
               headers: { "Content-Type": "application/json" },
             });
           }
-          // Ignore other malformed JSON — document is still created
         }
       }
 
@@ -241,22 +330,14 @@ class DocumentAgent extends Agent {
     }
 
     if (request.method === "GET") {
-      // Check whether this document exists
       this.ensureInitialised();
-      const rows = this.sql<{ value: ArrayBuffer }>`
-        SELECT value FROM doc_state WHERE key = 'exists'
-      `;
-      const exists = rows.length > 0;
+      const metadata = this.readMetadata();
 
-      const createdAtRows = this.sql<{ value: ArrayBuffer }>`
-        SELECT value FROM doc_state WHERE key = 'createdAt'
-      `;
-      const createdAt =
-        createdAtRows.length > 0
-          ? new Float64Array(createdAtRows[0].value)[0]
-          : null;
-
-      return new Response(JSON.stringify({ exists, createdAt }), {
+      return new Response(JSON.stringify({
+        exists: metadata !== null,
+        createdAt: metadata?.createdAt ?? null,
+        metadata,
+      }), {
         headers: { "Content-Type": "application/json" },
       });
     }
