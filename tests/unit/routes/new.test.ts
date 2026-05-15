@@ -139,6 +139,35 @@ describe("POST /new (action)", () => {
     expect(agentRequest.headers.get("Content-Type")).toBeNull();
   });
 
+  it("forwards normalized mist identity headers to the document agent", async () => {
+    const request = postRequest("# Test", {
+      "x-mist-user-id": "u-123",
+      "x-mist-user-login": "sean@example.com",
+      "x-mist-user-name": "Sean",
+      "x-mist-admin": "spoof",
+    });
+
+    await action({ request, context } as Parameters<typeof action>[0]);
+
+    const agentRequest = mockAgentFetch.mock.calls[0][0] as Request;
+    expect(agentRequest.headers.get("x-mist-user-id")).toBe("u-123");
+    expect(agentRequest.headers.get("x-mist-user-login")).toBe("sean@example.com");
+    expect(agentRequest.headers.get("x-mist-user-name")).toBe("Sean");
+    expect(agentRequest.headers.get("x-mist-admin")).toBeNull();
+  });
+
+  it("forwards identity headers when creating a blank document", async () => {
+    const request = postRequest("", {
+      "x-mist-user-login": "sean@example.com",
+    });
+
+    await action({ request, context } as Parameters<typeof action>[0]);
+
+    const agentRequest = mockAgentFetch.mock.calls[0][0] as Request;
+    expect(agentRequest.headers.get("x-mist-user-login")).toBe("sean@example.com");
+    expect(agentRequest.headers.get("Content-Type")).toBeNull();
+  });
+
   it("strips frontmatter and passes threads to agent", async () => {
     const md = `---
 mist:

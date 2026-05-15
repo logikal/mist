@@ -2,6 +2,7 @@ import { redirect } from "react-router";
 import { getAgentByName } from "agents";
 import type { Route } from "./+types/new";
 import { generateDocumentId } from "~/shared/constants";
+import { forwardMistIdentityHeaders } from "~/shared/document-metadata";
 import { getCloudflare } from "~/lib/cloudflare.server";
 import { deserializeThreads } from "~/lib/thread-serialization";
 
@@ -39,11 +40,13 @@ export async function action({ request, context }: Route.ActionArgs) {
     const { env } = getCloudflare(context);
     const stub = await getAgentByName(env.DocumentAgent, id);
 
-    const init: RequestInit = { method: "POST" };
+    const headers = new Headers();
+    forwardMistIdentityHeaders(headers, request.headers);
+    const init: RequestInit = { method: "POST", headers };
 
     if (content.trim()) {
       const { body, threads } = deserializeThreads(content);
-      init.headers = { "Content-Type": "application/json" };
+      headers.set("Content-Type", "application/json");
       init.body = JSON.stringify({ content: body, threads });
     }
 
