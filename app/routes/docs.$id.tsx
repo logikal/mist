@@ -19,6 +19,7 @@ import ThreadList from "~/components/ThreadList";
 import ThemeSelector from "~/components/ThemeSelector";
 import MobilePanel from "~/components/MobilePanel";
 import OnboardingBanner from "~/components/OnboardingBanner";
+import VersionsPanel from "~/components/VersionsPanel";
 
 export function meta(_args: Route.MetaArgs) {
   return [{ title: "mist" }];
@@ -136,7 +137,7 @@ function DocumentLayout({
             <ModeToggle />
             <SuggestionActions />
             {mode === "suggest" && <CleanViewToggle />}
-            <div className="border-t border-border" />
+            <VersionsPanel />
             <CommentInput />
             <ThreadList />
           </div>

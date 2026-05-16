@@ -5,6 +5,7 @@ import SuggestionActions from "~/components/SuggestionActions";
 import ModeToggle from "~/components/ModeToggle";
 import PreviewToggle from "~/components/PreviewToggle";
 import OnboardingBanner from "~/components/OnboardingBanner";
+import VersionsPanel from "~/components/VersionsPanel";
 import { useDocument } from "~/lib/DocumentContext";
 
 type Tab = "editing" | "comments" | "preview";
@@ -62,6 +63,7 @@ export default function MobilePanel({ className }: { className?: string }) {
               <OnboardingBanner />
               <ModeToggle />
               <SuggestionActions />
+              <VersionsPanel />
             </>
           )}
           {activeTab === "comments" && (
