@@ -97,4 +97,33 @@ describe("VersionsPanel", () => {
     expect(await findByText("Versions (1)")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("saves a manual version and refreshes the list", async () => {
+    const manualVersion: DocumentVersionSummary = {
+      ...version,
+      id: "manual-version",
+      reason: "manual",
+    };
+    fetchMock
+      .mockReturnValueOnce(jsonResponse({ versions: [] }))
+      .mockReturnValueOnce(jsonResponse({ ok: true, version: manualVersion }))
+      .mockReturnValueOnce(jsonResponse({ versions: [manualVersion] }));
+
+    const { findByText, getByRole } = renderWithDocument(
+      createElement(VersionsPanel),
+    );
+    await findByText("Versions (0)");
+
+    fireEvent.click(getByRole("button", { name: "Save version" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        "/agents/document-agent/test-doc/versions",
+        { method: "POST" },
+      );
+    });
+    expect(await findByText("Versions (1)")).toBeTruthy();
+    expect(await findByText("Manual")).toBeTruthy();
+  });
 });

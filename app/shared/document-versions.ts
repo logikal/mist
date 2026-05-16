@@ -12,6 +12,11 @@ export interface DocumentVersionsResponse {
   versions: DocumentVersionSummary[];
 }
 
+export interface SaveVersionResponse {
+  ok: true;
+  version: DocumentVersionSummary;
+}
+
 export interface RestoreVersionResponse {
   ok: true;
   restoredVersionId: string;

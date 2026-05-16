@@ -38,6 +38,7 @@ export default function VersionsPanel({
   const [versions, setVersions] = useState<DocumentVersionSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [restoringId, setRestoringId] = useState<string | null>(null);
 
   const versionsUrl = `/agents/document-agent/${encodeURIComponent(docId)}/versions`;
@@ -79,21 +80,46 @@ export default function VersionsPanel({
     }
   };
 
+  const handleSaveVersion = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(versionsUrl, { method: "POST" });
+      if (!res.ok) throw new Error("Failed to save version");
+      await loadVersions();
+    } catch {
+      setError("Could not save version");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <section className="border-t border-border">
       <div className="flex items-center justify-between px-3 py-2">
         <span className="text-sm uppercase tracking-wider text-muted">
           Versions ({versions.length})
         </span>
-        <button
-          type="button"
-          onClick={loadVersions}
-          disabled={loading}
-          className="cursor-pointer px-2 py-0.5 text-sm text-muted transition-colors hover:bg-border disabled:cursor-default disabled:opacity-50"
-          aria-label="Refresh versions"
-        >
-          Refresh
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => void handleSaveVersion()}
+            disabled={saving || loading}
+            className="cursor-pointer border border-border px-2 py-0.5 text-sm text-muted transition-colors hover:bg-border disabled:cursor-default disabled:opacity-50"
+            aria-label="Save version"
+          >
+            {saving ? "Saving" : "Save version"}
+          </button>
+          <button
+            type="button"
+            onClick={loadVersions}
+            disabled={loading}
+            className="cursor-pointer px-2 py-0.5 text-sm text-muted transition-colors hover:bg-border disabled:cursor-default disabled:opacity-50"
+            aria-label="Refresh versions"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
       {error && (

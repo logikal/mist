@@ -19,6 +19,7 @@ import {
   type DocumentVersionReason,
   type DocumentVersionSummary,
   type DocumentVersionsResponse,
+  type SaveVersionResponse,
   type RestoreVersionResponse,
 } from "../app/shared/document-versions";
 
@@ -239,6 +240,18 @@ class DocumentAgent extends Agent {
     });
   }
 
+  private saveManualVersion(request: Request): Response {
+    const version = this.createVersionSnapshot(
+      "manual",
+      Date.now(),
+      this.getCreatedByFromHeaders(request.headers),
+    );
+    const body: SaveVersionResponse = { ok: true, version };
+    return new Response(JSON.stringify(body), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   private readMetadata(): DocumentMetadata | null {
     const rows = this.sql<{ value: ArrayBuffer }>`
       SELECT value FROM doc_state WHERE key = 'metadata'
@@ -406,6 +419,10 @@ class DocumentAgent extends Agent {
 
     if (request.method === "POST" && restoreMatch) {
       return this.restoreVersion(decodeURIComponent(restoreMatch[1]), request);
+    }
+
+    if (request.method === "POST" && pathname === "/versions") {
+      return this.saveManualVersion(request);
     }
 
     if (request.method === "POST") {

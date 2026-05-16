@@ -570,6 +570,66 @@ describe("DocumentAgent", () => {
       cleanup(client);
     });
 
+    it("creates a manual version snapshot on demand", async () => {
+      await agent.onRequest(new Request("https://do/", { method: "POST" }));
+      const client = connectYjsClient();
+      client.doc.getText("default").insert(0, "keeper draft");
+
+      const res = await agent.onRequest(
+        new Request("https://do/versions", {
+          method: "POST",
+          headers: { "x-mist-user-login": "sean@example.com" },
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        ok: true;
+        version: TestDocumentVersionsResponse["versions"][number];
+      };
+      expect(body.version).toMatchObject({
+        docId: "test-doc",
+        createdBy: "sean@example.com",
+        reason: "manual",
+      });
+
+      const versionsRes = await agent.onRequest(new Request("https://do/versions"));
+      const versions = ((await versionsRes.json()) as TestDocumentVersionsResponse)
+        .versions;
+      expect(versions).toContainEqual(
+        expect.objectContaining({
+          id: body.version.id,
+          reason: "manual",
+        }),
+      );
+      cleanup(client);
+    });
+
+    it("creates a manual version through the public agent route subpath", async () => {
+      await agent.onRequest(new Request("https://do/", { method: "POST" }));
+
+      const res = await agent.onRequest(
+        new Request("https://mist.example.com/agents/document-agent/test-doc/versions", {
+          method: "POST",
+          headers: {
+            "x-partykit-namespace": "document-agent",
+            "x-partykit-room": "test-doc",
+            "x-mist-user-login": "sean@example.com",
+          },
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        ok: true;
+        version: TestDocumentVersionsResponse["versions"][number];
+      };
+      expect(body.version).toMatchObject({
+        createdBy: "sean@example.com",
+        reason: "manual",
+      });
+    });
+
     it("throttles autosave versions within the interval", async () => {
       vi.useFakeTimers();
       vi.setSystemTime(1_000_000);
