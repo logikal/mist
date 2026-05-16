@@ -1,14 +1,71 @@
 import { useRef, useState, useCallback } from "react";
+import { getAgentByName } from "agents";
 import { useNavigate } from "react-router";
 import type { Route } from "./+types/home";
 import { APP_NAME, generateDocumentId } from "~/shared/constants";
+import {
+  forwardMistIdentityHeaders,
+  getOwnerFromHeaders,
+  type DocumentOwner,
+} from "~/shared/document-metadata";
+import {
+  DOCUMENT_INDEX_AGENT_NAME,
+  type DocumentIndexEntry,
+  type DocumentIndexListResponse,
+} from "~/shared/document-index";
 import { getPublicOrigin } from "~/shared/public-origin";
+import { getCloudflare } from "~/lib/cloudflare.server";
 import { deserializeThreads } from "~/lib/thread-serialization";
 import ThemeSelector from "~/components/ThemeSelector";
 import demoDocument from "./demo.md?raw";
 
-export function loader({ request }: Route.LoaderArgs) {
-  return { origin: getPublicOrigin(request) };
+function hasOwnerIdentity(owner: DocumentOwner): boolean {
+  return Boolean(owner.id || owner.login || owner.name);
+}
+
+export function formatDocumentTime(updatedAt: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(updatedAt));
+}
+
+async function loadOwnedDocuments(
+  request: Request,
+  context: Route.LoaderArgs["context"],
+  owner: DocumentOwner,
+): Promise<DocumentIndexEntry[]> {
+  if (!hasOwnerIdentity(owner)) return [];
+
+  try {
+    const { env } = getCloudflare(context);
+    const stub = await getAgentByName(
+      env.DocumentIndexAgent,
+      DOCUMENT_INDEX_AGENT_NAME,
+    );
+    const headers = new Headers();
+    forwardMistIdentityHeaders(headers, request.headers);
+    const res = await stub.fetch(
+      new Request("https://index/documents", { headers }),
+    );
+    if (!res.ok) return [];
+
+    const body = (await res.json()) as DocumentIndexListResponse;
+    return body.documents;
+  } catch {
+    return [];
+  }
+}
+
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const owner = getOwnerFromHeaders(request.headers);
+  return {
+    origin: getPublicOrigin(request),
+    owner,
+    documents: await loadOwnedDocuments(request, context, owner),
+  };
 }
 
 export function meta(_args: Route.MetaArgs) {
@@ -19,7 +76,7 @@ export function meta(_args: Route.MetaArgs) {
 }
 
 export default function Home({ loaderData }: Route.ComponentProps) {
-  const { origin } = loaderData;
+  const { origin, owner, documents } = loaderData;
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [copied, setCopied] = useState(false);
@@ -159,6 +216,41 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             )}
           </button>
         </div>
+        {hasOwnerIdentity(owner) && (
+          <section className="mt-10 w-full max-w-2xl border-t border-border">
+            <div className="flex items-baseline justify-between gap-4 py-2">
+              <h2 className="text-sm font-normal uppercase tracking-wider text-muted">
+                Your documents
+              </h2>
+              <span className="truncate text-sm text-muted">
+                {owner.login ?? owner.name ?? owner.id}
+              </span>
+            </div>
+            {documents.length === 0 ? (
+              <div className="border-t border-border py-5 text-center text-muted">
+                No documents yet
+              </div>
+            ) : (
+              <div className="border-t border-border">
+                {documents.map((document) => (
+                  <a
+                    key={document.id}
+                    href={`/docs/${document.id}`}
+                    className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-4 border-b border-border py-2 text-left transition-colors hover:text-coral"
+                    aria-label={document.id}
+                  >
+                    <span className="truncate font-mono text-sm">
+                      {document.id}
+                    </span>
+                    <span className="shrink-0 font-mono text-xs text-muted">
+                      {formatDocumentTime(document.updatedAt)}
+                    </span>
+                  </a>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
       </div>
       <footer className="fixed bottom-0 left-0 right-0 z-10 flex items-baseline justify-between border-t border-border bg-paper px-4 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-base text-muted">
         <span>

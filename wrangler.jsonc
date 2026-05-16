@@ -10,11 +10,13 @@
 	},
 	"durable_objects": {
 		"bindings": [
-			{ "name": "DocumentAgent", "class_name": "DocumentAgent" }
+			{ "name": "DocumentAgent", "class_name": "DocumentAgent" },
+			{ "name": "DocumentIndexAgent", "class_name": "DocumentIndexAgent" }
 		]
 	},
 	"migrations": [
-		{ "tag": "v1", "new_sqlite_classes": ["DocumentAgent"] }
+		{ "tag": "v1", "new_sqlite_classes": ["DocumentAgent"] },
+		{ "tag": "v2", "new_sqlite_classes": ["DocumentIndexAgent"] }
 	],
 	"keep_vars": true
 }

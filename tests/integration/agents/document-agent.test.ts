@@ -15,6 +15,7 @@ import * as Y from "yjs";
 import * as awarenessProtocol from "y-protocols/awareness";
 import { DOCUMENT_TTL_MS, DOC_FORMAT_VERSION } from "~/shared/constants";
 import type { DocumentMetadata } from "~/shared/document-metadata";
+import { DOCUMENT_INDEX_AGENT_NAME } from "~/shared/document-index";
 import {
   MAX_DOCUMENT_VERSIONS,
   VERSION_AUTOSAVE_INTERVAL_MS,
@@ -47,11 +48,12 @@ let mockVersionRows: Array<{
 let mockConnectionMap: Map<string, MockConnection>;
 let mockSetAlarm: ReturnType<typeof vi.fn>;
 let mockFailVersionInserts: boolean;
+let mockIndexFetch: ReturnType<typeof vi.fn>;
 
 vi.mock("agents", () => ({
   Agent: class MockAgent {
     name = "test-doc";
-    env = {};
+    env = { DocumentIndexAgent: {} };
     ctx = {
       storage: {
         get setAlarm() {
@@ -146,6 +148,10 @@ vi.mock("agents", () => ({
       return mockConnectionMap.values();
     }
   },
+  getAgentByName: vi.fn(async (_namespace: unknown, name: string) => {
+    expect(name).toBe(DOCUMENT_INDEX_AGENT_NAME);
+    return { fetch: mockIndexFetch };
+  }),
 }));
 
 /* ------------------------------------------------------------------ */
@@ -227,6 +233,7 @@ describe("DocumentAgent", () => {
     mockConnectionMap = new Map();
     mockSetAlarm = vi.fn();
     mockFailVersionInserts = false;
+    mockIndexFetch = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
     nextConnId = 1;
 
     const mod = await import("../../../agents/document");
@@ -420,6 +427,34 @@ describe("DocumentAgent", () => {
         id: "u-123",
         login: "sean@example.com",
         name: "Sean",
+      });
+    });
+
+    it("upserts document metadata into the document index", async () => {
+      await agent.onRequest(
+        new Request("https://do/", {
+          method: "POST",
+          headers: {
+            "x-mist-user-id": "u-123",
+            "x-mist-user-login": "sean@example.com",
+            "x-mist-user-name": "Sean",
+          },
+        }),
+      );
+
+      expect(mockIndexFetch).toHaveBeenCalledOnce();
+      const indexRequest = mockIndexFetch.mock.calls[0][0] as Request;
+      expect(indexRequest.method).toBe("POST");
+      expect(new URL(indexRequest.url).pathname).toBe("/documents");
+      const body = (await indexRequest.json()) as DocumentMetadata;
+      expect(body).toMatchObject({
+        id: "test-doc",
+        owner: {
+          id: "u-123",
+          login: "sean@example.com",
+          name: "Sean",
+        },
+        retention: { mode: "persistent" },
       });
     });
 

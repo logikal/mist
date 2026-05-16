@@ -1,4 +1,4 @@
-import { Agent } from "agents";
+import { Agent, getAgentByName } from "agents";
 import type { Connection, ConnectionContext, WSMessage } from "agents";
 import * as Y from "yjs";
 import * as syncProtocol from "y-protocols/sync";
@@ -13,6 +13,7 @@ import {
   normalizeRetention,
   type DocumentMetadata,
 } from "../app/shared/document-metadata";
+import { DOCUMENT_INDEX_AGENT_NAME } from "../app/shared/document-index";
 import {
   MAX_DOCUMENT_VERSIONS,
   VERSION_AUTOSAVE_INTERVAL_MS,
@@ -118,7 +119,10 @@ class DocumentAgent extends Agent {
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
       `;
       const now = Date.now();
-      this.touchMetadata(now);
+      const metadata = this.touchMetadata(now);
+      if (metadata && !this.autosaveSuppressed) {
+        void this.updateDocumentIndex(metadata);
+      }
       try {
         this.maybeAutosaveSnapshot(now);
       } catch {
@@ -205,6 +209,40 @@ class DocumentAgent extends Agent {
     return owner.id ?? owner.login ?? owner.name;
   }
 
+  private async updateDocumentIndex(metadata: DocumentMetadata): Promise<void> {
+    try {
+      const namespace = this.env.DocumentIndexAgent;
+      if (!namespace) return;
+
+      const stub = await getAgentByName(namespace, DOCUMENT_INDEX_AGENT_NAME);
+      await stub.fetch(
+        new Request("https://index/documents", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(metadata),
+        }),
+      );
+    } catch {
+      // The document remains the source of truth; discovery indexing is best-effort.
+    }
+  }
+
+  private async removeDocumentFromIndex(documentId: string): Promise<void> {
+    try {
+      const namespace = this.env.DocumentIndexAgent;
+      if (!namespace) return;
+
+      const stub = await getAgentByName(namespace, DOCUMENT_INDEX_AGENT_NAME);
+      await stub.fetch(
+        new Request(`https://index/documents/${encodeURIComponent(documentId)}`, {
+          method: "DELETE",
+        }),
+      );
+    } catch {
+      // Expiry cleanup should not fail if the discovery index is unavailable.
+    }
+  }
+
   private restoreVersion(versionId: string, request: Request): Response {
     this.ensureInitialised();
     const rows = this.sql<{ state: ArrayBuffer }>`
@@ -222,7 +260,10 @@ class DocumentAgent extends Agent {
       INSERT INTO doc_state (key, value) VALUES ('state', ${sqlBlob(selectedState)})
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `;
-    this.touchMetadata(now);
+    const metadata = this.touchMetadata(now);
+    if (metadata) {
+      void this.updateDocumentIndex(metadata);
+    }
 
     for (const conn of this.getConnections()) {
       conn.close(1012, "Document restored");
@@ -291,10 +332,12 @@ class DocumentAgent extends Agent {
     `;
   }
 
-  private touchMetadata(now: number): void {
+  private touchMetadata(now: number): DocumentMetadata | null {
     const metadata = this.readMetadata();
-    if (!metadata) return;
-    this.writeMetadata({ ...metadata, updatedAt: now });
+    if (!metadata) return null;
+    const updated = { ...metadata, updatedAt: now };
+    this.writeMetadata(updated);
+    return updated;
   }
 
   async onConnect(connection: Connection, _ctx: ConnectionContext) {
@@ -394,6 +437,7 @@ class DocumentAgent extends Agent {
     }
 
     this.ensureInitialised();
+    await this.removeDocumentFromIndex(this.documentId);
     this.sql`DELETE FROM doc_versions`;
     this.sql`DELETE FROM doc_state`;
     for (const conn of this.getConnections()) {
@@ -459,6 +503,7 @@ class DocumentAgent extends Agent {
           retention: normalizeRetention(body?.retention, now),
         });
       this.writeMetadata(metadata);
+      await this.updateDocumentIndex(metadata);
 
       if (metadata.retention.mode === "ttl") {
         await this.ctx.storage.setAlarm(metadata.retention.expiresAt);

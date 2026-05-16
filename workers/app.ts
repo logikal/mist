@@ -3,6 +3,7 @@ import { routeAgentRequest } from "agents";
 import { cloudflareContext } from "../app/lib/cloudflare.server";
 
 export { default as DocumentAgent } from "../agents/document";
+export { default as DocumentIndexAgent } from "../agents/document-index";
 
 const requestHandler = createRequestHandler(
   () => import("virtual:react-router/server-build"),
