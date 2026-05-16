@@ -52,6 +52,26 @@ class DocumentAgent extends Agent {
     return (this as { name?: string }).name ?? "unknown";
   }
 
+  private getRequestPathname(request: Request): string {
+    const url = new URL(request.url);
+    const namespace = request.headers.get("x-partykit-namespace");
+    const room = request.headers.get("x-partykit-room");
+
+    if (!namespace || !room) {
+      return url.pathname;
+    }
+
+    const routedPrefix = `/agents/${namespace}/${room}`;
+    if (url.pathname === routedPrefix) {
+      return "/";
+    }
+    if (url.pathname.startsWith(`${routedPrefix}/`)) {
+      return url.pathname.slice(routedPrefix.length);
+    }
+
+    return url.pathname;
+  }
+
   private ensureInitialised(): { doc: Y.Doc; awareness: awarenessProtocol.Awareness } {
     if (this.doc && this.awareness) {
       return { doc: this.doc, awareness: this.awareness };
@@ -372,10 +392,10 @@ class DocumentAgent extends Agent {
   };
 
   async onRequest(request: Request) {
-    const url = new URL(request.url);
-    const restoreMatch = url.pathname.match(/^\/versions\/([^/]+)\/restore$/);
+    const pathname = this.getRequestPathname(request);
+    const restoreMatch = pathname.match(/^\/versions\/([^/]+)\/restore$/);
 
-    if (request.method === "GET" && url.pathname === "/versions") {
+    if (request.method === "GET" && pathname === "/versions") {
       const body: DocumentVersionsResponse = {
         versions: this.listVersionSummaries(),
       };

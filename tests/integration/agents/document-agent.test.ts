@@ -537,6 +537,22 @@ describe("DocumentAgent", () => {
       expect(await res.json()).toEqual({ versions: [] });
     });
 
+    it("returns versions through the public agent route subpath", async () => {
+      await agent.onRequest(new Request("https://do/", { method: "POST" }));
+
+      const res = await agent.onRequest(
+        new Request("https://mist.example.com/agents/document-agent/test-doc/versions", {
+          headers: {
+            "x-partykit-namespace": "document-agent",
+            "x-partykit-room": "test-doc",
+          },
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ versions: [] });
+    });
+
     it("creates one autosave version after a live edit", async () => {
       await agent.onRequest(new Request("https://do/", { method: "POST" }));
       const client = connectYjsClient();
@@ -605,6 +621,46 @@ describe("DocumentAgent", () => {
         const versions = ((await versionsRes.json()) as TestDocumentVersionsResponse)
           .versions;
         expect(versions.some((v) => v.reason === "restore")).toBe(true);
+
+        cleanup(client);
+        mockConnectionMap.clear();
+        const restoredAgent = new DocumentAgent({} as never, {} as never);
+        const restoredClient = connectYjsClient(restoredAgent);
+        expect(restoredClient.doc.getText("default").toString()).toBe("first");
+        cleanup(restoredClient);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("restores through the public agent route subpath", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(1_000_000);
+      try {
+        await agent.onRequest(new Request("https://do/", { method: "POST" }));
+        const client = connectYjsClient();
+        client.doc.getText("default").insert(0, "first");
+        const versionRes = await agent.onRequest(new Request("https://do/versions"));
+        const version = ((await versionRes.json()) as TestDocumentVersionsResponse)
+          .versions[0];
+
+        vi.setSystemTime(1_061_000);
+        client.doc.getText("default").insert(5, " second");
+
+        const restoreRes = await agent.onRequest(
+          new Request(
+            `https://mist.example.com/agents/document-agent/test-doc/versions/${version.id}/restore`,
+            {
+              method: "POST",
+              headers: {
+                "x-partykit-namespace": "document-agent",
+                "x-partykit-room": "test-doc",
+              },
+            },
+          ),
+        );
+
+        expect(restoreRes.status).toBe(200);
 
         cleanup(client);
         mockConnectionMap.clear();
