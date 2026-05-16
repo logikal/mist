@@ -2,6 +2,7 @@ import { Agent } from "agents";
 import {
   getOwnerFromHeaders,
   hasOwnerIdentity,
+  normalizeDocumentName,
   ownerMatchesIdentity,
   type DocumentMetadata,
   type DocumentRetention,
@@ -16,6 +17,7 @@ class DocumentIndexAgent extends Agent {
     this.sql`
       CREATE TABLE IF NOT EXISTS document_index (
         id TEXT PRIMARY KEY,
+        name TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         owner_id TEXT,
@@ -24,6 +26,11 @@ class DocumentIndexAgent extends Agent {
         retention TEXT NOT NULL
       )
     `;
+    try {
+      this.sql`ALTER TABLE document_index ADD COLUMN name TEXT`;
+    } catch {
+      // Existing/new tables may already have the column.
+    }
   }
 
   private getRequestPathname(request: Request): string {
@@ -50,6 +57,7 @@ class DocumentIndexAgent extends Agent {
     this.ensureInitialised();
     const rows = this.sql<{
       id: string;
+      name: string | null;
       createdAt: number;
       updatedAt: number;
       ownerId: string | null;
@@ -59,6 +67,7 @@ class DocumentIndexAgent extends Agent {
     }>`
       SELECT
         id,
+        name,
         created_at AS createdAt,
         updated_at AS updatedAt,
         owner_id AS ownerId,
@@ -71,6 +80,7 @@ class DocumentIndexAgent extends Agent {
 
     return rows.map((row) => ({
       id: row.id,
+      name: row.name,
       createdAt: Number(row.createdAt),
       updatedAt: Number(row.updatedAt),
       owner: {
@@ -102,10 +112,12 @@ class DocumentIndexAgent extends Agent {
     if (!metadata.id || !metadata.owner || !metadata.retention) {
       return new Response("Invalid document metadata", { status: 400 });
     }
+    const name = normalizeDocumentName(metadata.name);
 
     this.sql`
       INSERT INTO document_index (
         id,
+        name,
         created_at,
         updated_at,
         owner_id,
@@ -115,6 +127,7 @@ class DocumentIndexAgent extends Agent {
       )
       VALUES (
         ${metadata.id},
+        ${name},
         ${metadata.createdAt},
         ${metadata.updatedAt},
         ${metadata.owner.id},
@@ -124,6 +137,7 @@ class DocumentIndexAgent extends Agent {
       )
       ON CONFLICT(id) DO UPDATE SET
         created_at = excluded.created_at,
+        name = excluded.name,
         updated_at = excluded.updated_at,
         owner_id = excluded.owner_id,
         owner_login = excluded.owner_login,

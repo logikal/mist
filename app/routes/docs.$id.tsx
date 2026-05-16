@@ -1,3 +1,4 @@
+import { useState, type FormEvent } from "react";
 import { data, Link } from "react-router";
 import type { Route } from "./+types/docs.$id";
 import { getAgentByName } from "agents";
@@ -56,6 +57,93 @@ export function formatExpirationTime(expiresAt: number, now = Date.now()): strin
   return `${minutes}m`;
 }
 
+type UpdateDocumentMetadataResponse = {
+  ok: true;
+  metadata: DocumentMetadata;
+};
+
+export function DocumentTitle({
+  id,
+  metadata,
+}: {
+  id: string;
+  metadata: DocumentMetadata | null;
+}) {
+  const initialName = metadata?.name ?? "";
+  const [savedName, setSavedName] = useState(initialName);
+  const [draftName, setDraftName] = useState(initialName);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const normalizedDraft = draftName.trim();
+  const isDirty = normalizedDraft !== savedName;
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!isDirty || saving) return;
+
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/agents/document-agent/${encodeURIComponent(id)}/metadata`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: normalizedDraft }),
+        },
+      );
+      if (!res.ok) throw new Error("Name save failed");
+
+      const body = (await res.json()) as UpdateDocumentMetadataResponse;
+      const nextName = body.metadata.name ?? "";
+      setSavedName(nextName);
+      setDraftName(nextName);
+    } catch {
+      setError("Could not save name");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form
+      className="flex min-w-0 items-center gap-2"
+      onSubmit={(event) => void handleSubmit(event)}
+    >
+      <div className="min-w-0">
+        <label className="sr-only" htmlFor="document-name">
+          Document name
+        </label>
+        <input
+          id="document-name"
+          aria-label="Document name"
+          value={draftName}
+          onChange={(event) => setDraftName(event.target.value)}
+          placeholder="Name this doc"
+          className="block w-72 max-w-[42vw] min-w-0 bg-transparent p-0 text-sm font-medium text-ink outline-none placeholder:text-muted focus:underline disabled:opacity-50"
+          disabled={saving}
+        />
+        <div className="truncate font-mono text-xs text-muted">{id}</div>
+      </div>
+      {isDirty && (
+        <button
+          type="submit"
+          disabled={saving}
+          className="cursor-pointer border border-border px-2 py-1 text-xs text-muted transition-colors hover:border-ink hover:text-ink disabled:cursor-default disabled:opacity-50"
+          aria-label="Save document name"
+        >
+          {saving ? "Saving" : "Save"}
+        </button>
+      )}
+      {error && (
+        <span role="alert" className="whitespace-nowrap text-xs text-coral">
+          {error}
+        </span>
+      )}
+    </form>
+  );
+}
+
 export default function DocumentPage({ loaderData }: Route.ComponentProps) {
   const { id, createdAt, metadata } = loaderData;
   const yjs = useYjsEditor(id);
@@ -98,7 +186,7 @@ function DocumentLayout({
           mist
         </Link>
         <div className="flex grow shrink-0 items-center px-4">
-          <span className="font-mono font-bold">{id}</span>
+          <DocumentTitle id={id} metadata={metadata} />
           {metadata?.retention.mode === "ttl" && (
             <span className="ml-2 whitespace-nowrap text-muted">
               expires in {formatExpirationTime(metadata.retention.expiresAt)}

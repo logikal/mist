@@ -3,6 +3,7 @@ import type { DocumentIndexEntry } from "~/shared/document-index";
 
 let mockRows: Array<{
   id: string;
+  name: string | null;
   createdAt: number;
   updatedAt: number;
   ownerId: string | null;
@@ -23,17 +24,18 @@ vi.mock("agents", () => ({
       if (query.includes("create table")) return [];
 
       if (query.includes("insert into document_index")) {
-        const [
-          id,
-          createdAt,
-          updatedAt,
-          ownerId,
-          ownerLogin,
-          ownerName,
-          retention,
-        ] = values;
+        const hasName = values.length === 8;
+        const id = values[0];
+        const name = hasName ? values[1] : null;
+        const createdAt = hasName ? values[2] : values[1];
+        const updatedAt = hasName ? values[3] : values[2];
+        const ownerId = hasName ? values[4] : values[3];
+        const ownerLogin = hasName ? values[5] : values[4];
+        const ownerName = hasName ? values[6] : values[5];
+        const retention = hasName ? values[7] : values[6];
         const row = {
           id: String(id),
+          name: name === null ? null : String(name),
           createdAt: Number(createdAt),
           updatedAt: Number(updatedAt),
           ownerId: ownerId === null ? null : String(ownerId),
@@ -55,6 +57,7 @@ vi.mock("agents", () => ({
           .sort((a, b) => b.updatedAt - a.updatedAt)
           .map((row) => ({
             id: row.id,
+            name: row.name,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
             ownerId: row.ownerId,
@@ -91,6 +94,7 @@ describe("DocumentIndexAgent", () => {
   ): DocumentIndexEntry {
     return {
       id: "doc-1",
+      name: null,
       createdAt: 1_000,
       updatedAt: 2_000,
       owner: {
@@ -121,6 +125,26 @@ describe("DocumentIndexAgent", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       documents: [makeDocument()],
+    });
+  });
+
+  it("preserves public document names in owner lists", async () => {
+    await agent.onRequest(
+      new Request("https://index/documents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(makeDocument({ name: "Customer incident" })),
+      }),
+    );
+
+    const res = await agent.onRequest(
+      new Request("https://index/documents", {
+        headers: { "x-mist-user-login": "sean@example.com" },
+      }),
+    );
+
+    expect(await res.json()).toEqual({
+      documents: [makeDocument({ name: "Customer incident" })],
     });
   });
 

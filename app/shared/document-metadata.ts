@@ -16,6 +16,7 @@ export type DocumentRetention =
 
 export interface DocumentMetadata {
   id: string;
+  name: string | null;
   createdAt: number;
   updatedAt: number;
   owner: DocumentOwner;
@@ -24,6 +25,7 @@ export interface DocumentMetadata {
 
 export interface CreateDocumentMetadataInput {
   id: string;
+  name?: string | null;
   now: number;
   owner: DocumentOwner;
   retention: DocumentRetention;
@@ -53,6 +55,13 @@ export function forwardMistIdentityHeaders(target: Headers, source: Headers): vo
 
 export function hasOwnerIdentity(owner: DocumentOwner): boolean {
   return Boolean(owner.id || owner.login || owner.name);
+}
+
+export function normalizeDocumentName(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+
+  const name = input.trim();
+  return name ? name : null;
 }
 
 export function ownerMatchesIdentity(
@@ -111,12 +120,14 @@ export function normalizeRetention(input: unknown, now: number): DocumentRetenti
 
 export function createDocumentMetadata({
   id,
+  name = null,
   now,
   owner,
   retention,
 }: CreateDocumentMetadataInput): DocumentMetadata {
   return {
     id,
+    name,
     createdAt: now,
     updatedAt: now,
     owner,

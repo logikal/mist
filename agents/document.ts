@@ -11,6 +11,7 @@ import {
   getOwnerFromHeaders,
   hasOwnerIdentity,
   isExpired,
+  normalizeDocumentName,
   normalizeRetention,
   ownerMatchesIdentity,
   type DocumentMetadata,
@@ -358,12 +359,49 @@ class DocumentAgent extends Agent {
     });
   }
 
+  private async updateMetadata(request: Request): Promise<Response> {
+    const metadata = this.readMetadata();
+    if (!metadata) {
+      return new Response("Document not found", { status: 404 });
+    }
+
+    const requestOwner = getOwnerFromHeaders(request.headers);
+    if (
+      (hasOwnerIdentity(metadata.owner) || hasOwnerIdentity(requestOwner)) &&
+      !ownerMatchesIdentity(metadata.owner, requestOwner)
+    ) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    let body: { name?: unknown } | null = null;
+    if (request.headers.get("Content-Type")?.includes("application/json")) {
+      try {
+        body = (await request.json()) as { name?: unknown };
+      } catch {
+        body = null;
+      }
+    }
+
+    const updated = {
+      ...metadata,
+      name: normalizeDocumentName(body?.name),
+      updatedAt: Date.now(),
+    };
+    this.writeMetadata(updated);
+    await this.updateDocumentIndex(updated);
+
+    return new Response(JSON.stringify({ ok: true, metadata: updated }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   private readMetadata(): DocumentMetadata | null {
     const rows = this.sql<{ value: ArrayBuffer }>`
       SELECT value FROM doc_state WHERE key = 'metadata'
     `;
     if (rows.length > 0 && rows[0].value) {
-      return parseJsonBlob<DocumentMetadata>(rows[0].value);
+      const metadata = parseJsonBlob<DocumentMetadata>(rows[0].value);
+      return { ...metadata, name: metadata.name ?? null };
     }
 
     const existsRows = this.sql<{ value: ArrayBuffer }>`
@@ -383,6 +421,7 @@ class DocumentAgent extends Agent {
 
     return {
       id: this.documentId,
+      name: null,
       createdAt,
       updatedAt: createdAt,
       owner: { id: null, login: null, name: null },
@@ -512,6 +551,10 @@ class DocumentAgent extends Agent {
 
     if (request.method === "DELETE" && pathname === "/") {
       return this.deleteDocument(request);
+    }
+
+    if (request.method === "PATCH" && pathname === "/metadata") {
+      return this.updateMetadata(request);
     }
 
     if (request.method === "GET" && pathname === "/versions") {

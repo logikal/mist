@@ -39,6 +39,7 @@ const context = {} as Parameters<typeof loader>[0]["context"];
 
 const documentSummary: DocumentIndexEntry = {
   id: "doc-1",
+  name: null,
   createdAt: Date.UTC(2026, 4, 15, 12, 0),
   updatedAt: Date.UTC(2026, 4, 16, 12, 30),
   owner: {
@@ -106,6 +107,31 @@ describe("Home", () => {
     expect(getByRole("link", { name: "doc-1" }).getAttribute("href")).toBe(
       "/docs/doc-1",
     );
+  });
+
+  it("renders friendly document names before ids", () => {
+    const namedDocument = {
+      ...documentSummary,
+      name: "Customer incident",
+    };
+
+    const { getByText, getByRole } = render(
+      createElement(Home, {
+        loaderData: {
+          origin: "https://mist.example.com",
+          owner: documentSummary.owner,
+          documents: [namedDocument],
+        },
+        params: {},
+        matches: [],
+      } as never),
+    );
+
+    expect(getByText("Customer incident")).toBeTruthy();
+    expect(getByText("doc-1")).toBeTruthy();
+    expect(
+      getByRole("link", { name: "Customer incident" }).getAttribute("href"),
+    ).toBe("/docs/doc-1");
   });
 
   it("creates new documents from a persistent-storage starter template", async () => {

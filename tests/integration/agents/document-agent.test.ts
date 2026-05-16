@@ -334,6 +334,7 @@ describe("DocumentAgent", () => {
       expect(body.createdAt).toBeLessThanOrEqual(after);
       expect(body.metadata).toMatchObject({
         id: "test-doc",
+        name: null,
         owner: { id: null, login: null, name: null },
         retention: { mode: "persistent" },
       });
@@ -358,6 +359,7 @@ describe("DocumentAgent", () => {
       expect(body.exists).toBe(true);
       expect(body.metadata).toEqual({
         id: "test-doc",
+        name: null,
         createdAt,
         updatedAt: createdAt,
         owner: { id: null, login: null, name: null },
@@ -453,6 +455,7 @@ describe("DocumentAgent", () => {
       const body = (await indexRequest.json()) as DocumentMetadata;
       expect(body).toMatchObject({
         id: "test-doc",
+        name: null,
         owner: {
           id: "u-123",
           login: "sean@example.com",
@@ -560,6 +563,125 @@ describe("DocumentAgent", () => {
       const getRes = await agent.onRequest(new Request("https://do/"));
       const body = (await getRes.json()) as { exists: boolean };
       expect(body.exists).toBe(true);
+    });
+  });
+
+  /* ================================================================ */
+  /*  HTTP PATCH /metadata                                             */
+  /* ================================================================ */
+
+  describe("PATCH /metadata", () => {
+    it("renames a document for the matching owner identity", async () => {
+      await agent.onRequest(
+        new Request("https://do/", {
+          method: "POST",
+          headers: {
+            "x-mist-user-id": "u-123",
+            "x-mist-user-login": "sean@example.com",
+            "x-mist-user-name": "Sean",
+          },
+        }),
+      );
+      mockIndexFetch.mockClear();
+
+      const res = await agent.onRequest(
+        new Request("https://do/metadata", {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            "x-mist-user-login": "sean@example.com",
+          },
+          body: JSON.stringify({ name: "  Customer incident  " }),
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { ok: true; metadata: DocumentMetadata };
+      expect(body.metadata.name).toBe("Customer incident");
+
+      const getRes = await agent.onRequest(new Request("https://do/"));
+      const getBody = (await getRes.json()) as { metadata: DocumentMetadata };
+      expect(getBody.metadata.name).toBe("Customer incident");
+
+      expect(mockIndexFetch).toHaveBeenCalledOnce();
+      const indexRequest = mockIndexFetch.mock.calls[0][0] as Request;
+      expect(indexRequest.method).toBe("POST");
+      const indexed = (await indexRequest.json()) as DocumentMetadata;
+      expect(indexed.name).toBe("Customer incident");
+    });
+
+    it("clears a document name with whitespace", async () => {
+      await agent.onRequest(new Request("https://do/", { method: "POST" }));
+      await agent.onRequest(
+        new Request("https://do/metadata", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: "Customer incident" }),
+        }),
+      );
+
+      const res = await agent.onRequest(
+        new Request("https://do/metadata", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: "   " }),
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { metadata: DocumentMetadata };
+      expect(body.metadata.name).toBeNull();
+    });
+
+    it("rejects renames from a different stable identity", async () => {
+      await agent.onRequest(
+        new Request("https://do/", {
+          method: "POST",
+          headers: {
+            "x-mist-user-id": "u-123",
+            "x-mist-user-login": "sean@example.com",
+            "x-mist-user-name": "Sean",
+          },
+        }),
+      );
+      mockIndexFetch.mockClear();
+
+      const res = await agent.onRequest(
+        new Request("https://do/metadata", {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            "x-mist-user-login": "alex@example.com",
+          },
+          body: JSON.stringify({ name: "Customer incident" }),
+        }),
+      );
+
+      expect(res.status).toBe(403);
+      const getRes = await agent.onRequest(new Request("https://do/"));
+      const getBody = (await getRes.json()) as { metadata: DocumentMetadata };
+      expect(getBody.metadata.name).toBeNull();
+      expect(mockIndexFetch).not.toHaveBeenCalled();
+    });
+
+    it("renames through the public agent route subpath", async () => {
+      await agent.onRequest(new Request("https://do/", { method: "POST" }));
+
+      const res = await agent.onRequest(
+        new Request("https://mist.example.com/agents/document-agent/test-doc/metadata", {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            "x-partykit-namespace": "document-agent",
+            "x-partykit-room": "test-doc",
+          },
+          body: JSON.stringify({ name: "Public incident doc" }),
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { metadata: DocumentMetadata };
+      expect(body.metadata.name).toBe("Public incident doc");
     });
   });
 

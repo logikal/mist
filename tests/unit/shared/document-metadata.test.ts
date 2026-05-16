@@ -96,6 +96,7 @@ describe("document metadata helpers", () => {
 
     expect(metadata).toEqual({
       id: "abcd1234",
+      name: null,
       createdAt: 10_000,
       updatedAt: 10_000,
       owner: { id: "u-1", login: "s@example.com", name: "Sean" },

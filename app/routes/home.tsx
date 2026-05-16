@@ -269,34 +269,51 @@ export default function Home({
               </div>
             ) : (
               <div className="border-t border-border">
-                {ownedDocuments.map((document) => (
-                  <div
-                    key={document.id}
-                    className="grid grid-cols-[minmax(0,1fr)_auto] items-stretch border-b border-border"
-                  >
-                    <a
-                      href={`/docs/${document.id}`}
-                      className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-4 py-2 pr-3 text-left transition-colors hover:text-coral"
-                      aria-label={document.id}
+                {ownedDocuments.map((document) => {
+                  const documentName = document.name ?? document.id;
+
+                  return (
+                    <div
+                      key={document.id}
+                      className="grid grid-cols-[minmax(0,1fr)_auto] items-stretch border-b border-border"
                     >
-                      <span className="truncate font-mono text-sm">
-                        {document.id}
-                      </span>
-                      <span className="shrink-0 font-mono text-xs text-muted">
-                        {formatDocumentTime(document.updatedAt)}
-                      </span>
-                    </a>
-                    <button
-                      type="button"
-                      onClick={() => void handleDeleteDocument(document)}
-                      disabled={deletingDocumentId === document.id}
-                      className="cursor-pointer border-l border-border px-3 text-xs uppercase tracking-wider text-muted transition-colors hover:bg-border hover:text-ink disabled:cursor-default disabled:opacity-50"
-                      aria-label={`Delete ${document.id}`}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                ))}
+                      <a
+                        href={`/docs/${document.id}`}
+                        className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-4 py-2 pr-3 text-left transition-colors hover:text-coral"
+                        aria-label={documentName}
+                      >
+                        <span className="min-w-0">
+                          <span
+                            className={
+                              document.name
+                                ? "block truncate text-sm font-medium"
+                                : "block truncate font-mono text-sm"
+                            }
+                          >
+                            {documentName}
+                          </span>
+                          {document.name && (
+                            <span className="block truncate font-mono text-xs text-muted">
+                              {document.id}
+                            </span>
+                          )}
+                        </span>
+                        <span className="shrink-0 font-mono text-xs text-muted">
+                          {formatDocumentTime(document.updatedAt)}
+                        </span>
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteDocument(document)}
+                        disabled={deletingDocumentId === document.id}
+                        className="cursor-pointer border-l border-border px-3 text-xs uppercase tracking-wider text-muted transition-colors hover:bg-border hover:text-ink disabled:cursor-default disabled:opacity-50"
+                        aria-label={`Delete ${document.id}`}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </section>
