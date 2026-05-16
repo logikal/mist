@@ -13,8 +13,10 @@ Everything is public by URL. Documents persist live with no save button. Multipl
 - **Preview mode** — rendered markdown with click, hover, or keypress toggle
 - **CLI upload** — `curl https://your-domain/new -T file.md`
 - **Drag and drop** `.md` files to create new documents
+- **Persistent documents by default**, with optional TTL retention for temporary docs
+- **Autosaved and manual versions** for restoring earlier drafts
+- **Owner discovery** when served behind the Tailscale gateway
 - **Dark/light/auto themes**
-- **Documents auto-expire** after 99 hours
 
 ## Tech stack
 

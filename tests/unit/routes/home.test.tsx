@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { createElement } from "react";
-import { render } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import type { DocumentIndexEntry } from "~/shared/document-index";
 
 const { mockIndexFetch, mockNavigate } = vi.hoisted(() => ({
@@ -48,6 +48,10 @@ const documentSummary: DocumentIndexEntry = {
   },
   retention: { mode: "persistent" },
 };
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("home loader", () => {
   beforeEach(() => {
@@ -102,5 +106,30 @@ describe("Home", () => {
     expect(getByRole("link", { name: "doc-1" }).getAttribute("href")).toBe(
       "/docs/doc-1",
     );
+  });
+
+  it("creates new documents from a persistent-storage starter template", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { getByRole } = render(
+      createElement(Home, {
+        loaderData: {
+          origin: "https://mist.example.com",
+          owner: { id: null, login: null, name: null },
+          documents: [],
+        },
+        params: {},
+        matches: [],
+      } as never),
+    );
+
+    fireEvent.click(getByRole("button", { name: "New document" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    const requestBody = JSON.parse(
+      (fetchMock.mock.calls[0][1] as RequestInit).body as string,
+    ) as { content: string };
+    expect(requestBody.content).not.toMatch(/auto-delete|ephemeral|99 hours/i);
   });
 });
