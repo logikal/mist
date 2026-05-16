@@ -85,6 +85,16 @@ describe("POST /new (action)", () => {
     expect(text).toBe("https://mist.example.com/docs/abcd1234\n");
   });
 
+  it("uses the gateway public origin when returning the document URL", async () => {
+    const request = postRequest("# Hello", {
+      "x-mist-public-origin": "https://mist.tailnet.ts.net",
+    });
+    const response = await action({ request, context } as Parameters<typeof action>[0]);
+
+    expect(response.status).toBe(201);
+    expect(await response.text()).toBe("https://mist.tailnet.ts.net/docs/abcd1234\n");
+  });
+
   it("returns 201 for empty body (blank document)", async () => {
     const request = postRequest("");
     const response = await action({ request, context } as Parameters<typeof action>[0]);

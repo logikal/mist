@@ -1,5 +1,6 @@
 export interface GatewayConfig {
   upstreamOrigin: URL;
+  publicOrigin?: URL;
   host: string;
   port: number;
   cfAccessClientId?: string;
@@ -34,8 +35,19 @@ export function loadGatewayConfig(env: NodeJS.ProcessEnv = process.env): Gateway
     throw new Error("MIST_UPSTREAM_ORIGIN must use http: or https:");
   }
 
+  const rawPublicOrigin = readOptional(env, "MIST_PUBLIC_ORIGIN");
+  const publicOrigin = rawPublicOrigin ? new URL(rawPublicOrigin) : undefined;
+  if (
+    publicOrigin &&
+    publicOrigin.protocol !== "http:" &&
+    publicOrigin.protocol !== "https:"
+  ) {
+    throw new Error("MIST_PUBLIC_ORIGIN must use http: or https:");
+  }
+
   return {
     upstreamOrigin,
+    publicOrigin,
     host: readOptional(env, "MIST_GATEWAY_HOST") ?? "127.0.0.1",
     port: readPort(env),
     cfAccessClientId: readOptional(env, "CF_ACCESS_CLIENT_ID"),

@@ -3,6 +3,7 @@ import { getAgentByName } from "agents";
 import type { Route } from "./+types/new";
 import { generateDocumentId } from "~/shared/constants";
 import { forwardMistIdentityHeaders } from "~/shared/document-metadata";
+import { getPublicOrigin } from "~/shared/public-origin";
 import { getCloudflare } from "~/lib/cloudflare.server";
 import { deserializeThreads } from "~/lib/thread-serialization";
 
@@ -61,8 +62,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       }
     }
 
-    const url = new URL(request.url);
-    return new Response(`${url.origin}/docs/${id}\n`, {
+    return new Response(`${getPublicOrigin(request)}/docs/${id}\n`, {
       status: 201,
       headers: { "Content-Type": "text/plain" },
     });

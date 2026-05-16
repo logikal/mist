@@ -62,4 +62,30 @@ describe("gateway header utilities", () => {
     expect(headers.get("cf-access-client-id")).toBeNull();
     expect(headers.get("cf-access-client-secret")).toBeNull();
   });
+
+  it("forwards the trusted public gateway origin", () => {
+    const headers = buildUpstreamHeaders(
+      new Headers({
+        Host: "mist.tailnet.ts.net",
+        "x-forwarded-proto": "https",
+        "x-mist-public-origin": "https://spoof.example.com",
+      }),
+      {},
+    );
+
+    expect(headers.get("x-mist-public-origin")).toBe("https://mist.tailnet.ts.net");
+  });
+
+  it("prefers an explicit public origin from gateway config", () => {
+    const headers = buildUpstreamHeaders(
+      new Headers({
+        Host: "127.0.0.1:8788",
+      }),
+      {
+        publicOrigin: new URL("https://mist.tailnet.ts.net"),
+      },
+    );
+
+    expect(headers.get("x-mist-public-origin")).toBe("https://mist.tailnet.ts.net");
+  });
 });

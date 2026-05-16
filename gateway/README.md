@@ -15,11 +15,14 @@ Optional:
 ```sh
 MIST_GATEWAY_HOST=127.0.0.1
 MIST_GATEWAY_PORT=8788
+MIST_PUBLIC_ORIGIN=https://mist.example.ts.net
 CF_ACCESS_CLIENT_ID=<cloudflare-access-service-token-client-id>
 CF_ACCESS_CLIENT_SECRET=<cloudflare-access-service-token-client-secret>
 ```
 
 `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` must be set together. The gateway strips inbound spoofable `x-mist-*`, `tailscale-*`, and Cloudflare Access service-token headers before adding its own trusted headers.
+
+`MIST_PUBLIC_ORIGIN` should be the tailnet URL users see in their browser. When omitted, the gateway infers it from forwarded request headers.
 
 ## Local Run
 
@@ -75,6 +78,7 @@ services:
     network_mode: service:tailscale-mist
     environment:
       MIST_UPSTREAM_ORIGIN: https://mist.example.com
+      MIST_PUBLIC_ORIGIN: https://mist.example.ts.net
       MIST_GATEWAY_HOST: 127.0.0.1
       MIST_GATEWAY_PORT: 8788
       CF_ACCESS_CLIENT_ID: ${CF_ACCESS_CLIENT_ID}

@@ -1,4 +1,5 @@
 export interface AccessTokenConfig {
+  publicOrigin?: URL;
   cfAccessClientId?: string;
   cfAccessClientSecret?: string;
 }
@@ -22,6 +23,16 @@ function cleanHeaderValue(value: string | null): string | null {
   const decoded = value ? decodeTailscaleHeaderValue(value) : "";
   const trimmed = decoded.trim();
   return trimmed ? trimmed : null;
+}
+
+function inferPublicOrigin(source: Headers): string | null {
+  const host = cleanHeaderValue(source.get("x-forwarded-host")) ?? cleanHeaderValue(source.get("host"));
+  if (!host) return null;
+
+  const proto = cleanHeaderValue(source.get("x-forwarded-proto")) ?? "http";
+  if (proto !== "http" && proto !== "https") return null;
+
+  return `${proto}://${host}`;
 }
 
 export function decodeTailscaleHeaderValue(value: string): string {
@@ -83,6 +94,11 @@ export function buildUpstreamHeaders(
 
   for (const [name, value] of normalizeTailscaleIdentityHeaders(source)) {
     target.set(name, value);
+  }
+
+  const publicOrigin = config.publicOrigin?.origin ?? inferPublicOrigin(source);
+  if (publicOrigin) {
+    target.set("x-mist-public-origin", publicOrigin);
   }
 
   if (config.cfAccessClientId && config.cfAccessClientSecret) {

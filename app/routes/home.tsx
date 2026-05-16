@@ -2,13 +2,13 @@ import { useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router";
 import type { Route } from "./+types/home";
 import { APP_NAME, generateDocumentId } from "~/shared/constants";
+import { getPublicOrigin } from "~/shared/public-origin";
 import { deserializeThreads } from "~/lib/thread-serialization";
 import ThemeSelector from "~/components/ThemeSelector";
 import demoDocument from "./demo.md?raw";
 
 export function loader({ request }: Route.LoaderArgs) {
-  const url = new URL(request.url);
-  return { origin: url.origin };
+  return { origin: getPublicOrigin(request) };
 }
 
 export function meta(_args: Route.MetaArgs) {
