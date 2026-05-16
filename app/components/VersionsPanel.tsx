@@ -23,6 +23,10 @@ function formatVersionTime(createdAt: number): string {
   }).format(new Date(createdAt));
 }
 
+function getVersionTitle(version: DocumentVersionSummary): string {
+  return version.label ?? formatReason(version.reason);
+}
+
 const defaultReloadPage = () => {
   window.location.reload();
 };
@@ -39,6 +43,7 @@ export default function VersionsPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [manualVersionName, setManualVersionName] = useState("");
   const [restoringId, setRestoringId] = useState<string | null>(null);
 
   const versionsUrl = `/agents/document-agent/${encodeURIComponent(docId)}/versions`;
@@ -83,9 +88,20 @@ export default function VersionsPanel({
   const handleSaveVersion = async () => {
     setSaving(true);
     setError(null);
+    const label = manualVersionName.trim();
     try {
-      const res = await fetch(versionsUrl, { method: "POST" });
+      const res = await fetch(
+        versionsUrl,
+        label
+          ? {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ label }),
+            }
+          : { method: "POST" },
+      );
       if (!res.ok) throw new Error("Failed to save version");
+      setManualVersionName("");
       await loadVersions();
     } catch {
       setError("Could not save version");
@@ -100,7 +116,18 @@ export default function VersionsPanel({
         <span className="text-sm uppercase tracking-wider text-muted">
           Versions ({versions.length})
         </span>
-        <div className="flex items-center gap-1">
+        <div className="flex min-w-0 items-center gap-1">
+          <label className="sr-only" htmlFor="manual-version-name">
+            Version name
+          </label>
+          <input
+            id="manual-version-name"
+            value={manualVersionName}
+            onChange={(event) => setManualVersionName(event.target.value)}
+            disabled={saving || loading}
+            className="min-w-0 max-w-36 border border-border bg-paper px-2 py-0.5 text-sm text-ink outline-none transition-colors placeholder:text-muted focus:border-ink disabled:opacity-50"
+            placeholder="Name"
+          />
           <button
             type="button"
             onClick={() => void handleSaveVersion()}
@@ -138,7 +165,9 @@ export default function VersionsPanel({
         <div key={version.id} className="border-t border-border px-3 py-2">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-sm font-medium">{formatReason(version.reason)}</div>
+              <div className="truncate text-sm font-medium">
+                {getVersionTitle(version)}
+              </div>
               <div className="truncate font-mono text-xs text-muted">
                 {formatVersionTime(version.createdAt)}
               </div>

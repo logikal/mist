@@ -28,6 +28,7 @@ type TestDocumentVersionsResponse = {
     docId: string;
     createdAt: number;
     createdBy: string | null;
+    label: string | null;
     reason: "autosave" | "manual" | "restore";
   }>;
 };
@@ -42,6 +43,7 @@ let mockVersionRows: Array<{
   docId: string;
   createdAt: number;
   createdBy: string | null;
+  label: string | null;
   reason: "autosave" | "manual" | "restore";
   state: ArrayBuffer;
 }>;
@@ -91,11 +93,12 @@ vi.mock("agents", () => ({
 
         return [...mockVersionRows]
           .sort((a, b) => b.createdAt - a.createdAt)
-          .map(({ id, docId, createdAt, createdBy, reason }) => ({
+          .map(({ id, docId, createdAt, createdBy, label, reason }) => ({
             id,
             docId,
             createdAt,
             createdBy,
+            label,
             reason,
           }));
       }
@@ -104,13 +107,14 @@ vi.mock("agents", () => ({
         if (mockFailVersionInserts) {
           throw new Error("version storage unavailable");
         }
-        const [id, docId, createdAt, createdBy, reason, state] = values;
+        const [id, docId, createdAt, createdBy, reason, label, state] = values;
         if (state instanceof Uint8Array) {
           mockVersionRows.push({
             id: String(id),
             docId: String(docId),
             createdAt: Number(createdAt),
             createdBy: createdBy === null ? null : String(createdBy),
+            label: label === null ? null : String(label),
             reason: reason as "autosave" | "manual" | "restore",
             state: state.buffer.slice(state.byteOffset, state.byteOffset + state.byteLength),
           });
@@ -716,6 +720,7 @@ describe("DocumentAgent", () => {
       expect(body.version).toMatchObject({
         docId: "test-doc",
         createdBy: "sean@example.com",
+        label: null,
         reason: "manual",
       });
 
@@ -725,7 +730,46 @@ describe("DocumentAgent", () => {
       expect(versions).toContainEqual(
         expect.objectContaining({
           id: body.version.id,
+          label: null,
           reason: "manual",
+        }),
+      );
+      cleanup(client);
+    });
+
+    it("stores a name for a manual version snapshot", async () => {
+      await agent.onRequest(new Request("https://do/", { method: "POST" }));
+      const client = connectYjsClient();
+      client.doc.getText("default").insert(0, "named draft");
+
+      const res = await agent.onRequest(
+        new Request("https://do/versions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-mist-user-login": "sean@example.com",
+          },
+          body: JSON.stringify({ label: "  Before legal review  " }),
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        ok: true;
+        version: TestDocumentVersionsResponse["versions"][number];
+      };
+      expect(body.version).toMatchObject({
+        label: "Before legal review",
+        reason: "manual",
+      });
+
+      const versionsRes = await agent.onRequest(new Request("https://do/versions"));
+      const versions = ((await versionsRes.json()) as TestDocumentVersionsResponse)
+        .versions;
+      expect(versions).toContainEqual(
+        expect.objectContaining({
+          id: body.version.id,
+          label: "Before legal review",
         }),
       );
       cleanup(client);

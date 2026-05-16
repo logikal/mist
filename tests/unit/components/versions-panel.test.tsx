@@ -11,6 +11,7 @@ const version: DocumentVersionSummary = {
   docId: "test-doc",
   createdAt: Date.UTC(2026, 4, 16, 18, 30),
   createdBy: "sean@example.com",
+  label: null,
   reason: "autosave",
 };
 
@@ -102,6 +103,7 @@ describe("VersionsPanel", () => {
     const manualVersion: DocumentVersionSummary = {
       ...version,
       id: "manual-version",
+      label: null,
       reason: "manual",
     };
     fetchMock
@@ -125,5 +127,41 @@ describe("VersionsPanel", () => {
     });
     expect(await findByText("Versions (1)")).toBeTruthy();
     expect(await findByText("Manual")).toBeTruthy();
+  });
+
+  it("saves a named manual version and renders the name", async () => {
+    const manualVersion: DocumentVersionSummary = {
+      ...version,
+      id: "manual-version",
+      label: "Before legal review",
+      reason: "manual",
+    };
+    fetchMock
+      .mockReturnValueOnce(jsonResponse({ versions: [] }))
+      .mockReturnValueOnce(jsonResponse({ ok: true, version: manualVersion }))
+      .mockReturnValueOnce(jsonResponse({ versions: [manualVersion] }));
+
+    const { findByText, getByLabelText, getByRole } = renderWithDocument(
+      createElement(VersionsPanel),
+    );
+    await findByText("Versions (0)");
+
+    fireEvent.change(getByLabelText("Version name"), {
+      target: { value: "Before legal review" },
+    });
+    fireEvent.click(getByRole("button", { name: "Save version" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        "/agents/document-agent/test-doc/versions",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label: "Before legal review" }),
+        },
+      );
+    });
+    expect(await findByText("Before legal review")).toBeTruthy();
   });
 });

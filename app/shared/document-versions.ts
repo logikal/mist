@@ -5,6 +5,7 @@ export interface DocumentVersionSummary {
   docId: string;
   createdAt: number;
   createdBy: string | null;
+  label: string | null;
   reason: DocumentVersionReason;
 }
 

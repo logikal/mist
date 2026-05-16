@@ -46,6 +46,13 @@ function parseJsonBlob<T>(value: ArrayBuffer): T {
   return JSON.parse(jsonDecoder.decode(new Uint8Array(value))) as T;
 }
 
+function normalizeVersionLabel(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+
+  const label = input.trim();
+  return label ? label : null;
+}
+
 class DocumentAgent extends Agent {
   private doc: Y.Doc | null = null;
   private awareness: awarenessProtocol.Awareness | null = null;
@@ -99,9 +106,15 @@ class DocumentAgent extends Agent {
         created_at INTEGER NOT NULL,
         created_by TEXT,
         reason TEXT NOT NULL,
+        label TEXT,
         state BLOB NOT NULL
       )
     `;
+    try {
+      this.sql`ALTER TABLE doc_versions ADD COLUMN label TEXT`;
+    } catch {
+      // Existing/new tables may already have the column.
+    }
 
     // Load persisted state
     const rows = this.sql<{ value: ArrayBuffer }>`
@@ -139,14 +152,15 @@ class DocumentAgent extends Agent {
     reason: DocumentVersionReason,
     now: number,
     createdBy: string | null,
+    label: string | null = null,
   ): DocumentVersionSummary {
     const { doc } = this.ensureInitialised();
     const id = crypto.randomUUID();
     const state = Y.encodeStateAsUpdate(doc);
 
     this.sql`
-      INSERT INTO doc_versions (id, doc_id, created_at, created_by, reason, state)
-      VALUES (${id}, ${this.documentId}, ${now}, ${createdBy}, ${reason}, ${sqlBlob(state)})
+      INSERT INTO doc_versions (id, doc_id, created_at, created_by, reason, label, state)
+      VALUES (${id}, ${this.documentId}, ${now}, ${createdBy}, ${reason}, ${label}, ${sqlBlob(state)})
     `;
     this.pruneVersionSnapshots();
 
@@ -155,6 +169,7 @@ class DocumentAgent extends Agent {
       docId: this.documentId,
       createdAt: now,
       createdBy,
+      label,
       reason,
     };
   }
@@ -185,6 +200,7 @@ class DocumentAgent extends Agent {
       docId: string;
       createdAt: number;
       createdBy: string | null;
+      label: string | null;
       reason: DocumentVersionReason;
     }>`
       SELECT
@@ -192,6 +208,7 @@ class DocumentAgent extends Agent {
         doc_id AS docId,
         created_at AS createdAt,
         created_by AS createdBy,
+        label,
         reason
       FROM doc_versions
       ORDER BY created_at DESC
@@ -202,6 +219,7 @@ class DocumentAgent extends Agent {
       docId: row.docId,
       createdAt: Number(row.createdAt),
       createdBy: row.createdBy,
+      label: row.label,
       reason: row.reason,
     }));
   }
@@ -318,14 +336,24 @@ class DocumentAgent extends Agent {
     });
   }
 
-  private saveManualVersion(request: Request): Response {
+  private async saveManualVersion(request: Request): Promise<Response> {
+    let body: { label?: unknown } | null = null;
+    if (request.headers.get("Content-Type")?.includes("application/json")) {
+      try {
+        body = (await request.json()) as { label?: unknown };
+      } catch {
+        body = null;
+      }
+    }
+
     const version = this.createVersionSnapshot(
       "manual",
       Date.now(),
       this.getCreatedByFromHeaders(request.headers),
+      normalizeVersionLabel(body?.label),
     );
-    const body: SaveVersionResponse = { ok: true, version };
-    return new Response(JSON.stringify(body), {
+    const responseBody: SaveVersionResponse = { ok: true, version };
+    return new Response(JSON.stringify(responseBody), {
       headers: { "Content-Type": "application/json" },
     });
   }
