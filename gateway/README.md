@@ -16,6 +16,7 @@ Optional:
 MIST_GATEWAY_HOST=127.0.0.1
 MIST_GATEWAY_PORT=8788
 MIST_PUBLIC_ORIGIN=https://mist.example.ts.net
+MIST_REQUIRE_IDENTITY=false
 CF_ACCESS_CLIENT_ID=<cloudflare-access-service-token-client-id>
 CF_ACCESS_CLIENT_SECRET=<cloudflare-access-service-token-client-secret>
 ```
@@ -23,6 +24,8 @@ CF_ACCESS_CLIENT_SECRET=<cloudflare-access-service-token-client-secret>
 `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` must be set together. The gateway strips inbound spoofable `x-mist-*`, `tailscale-*`, and Cloudflare Access service-token headers before adding its own trusted headers.
 
 `MIST_PUBLIC_ORIGIN` should be the tailnet URL users see in their browser. When omitted, the gateway infers it from forwarded request headers.
+
+Set `MIST_REQUIRE_IDENTITY=true` in tailnet deployments that should reject traffic unless Tailscale has supplied `Tailscale-User-Login`. Health checks still work without identity. Leave it unset or `false` for local development and anonymous-owner documents.
 
 ## Local Run
 
@@ -79,6 +82,7 @@ services:
     environment:
       MIST_UPSTREAM_ORIGIN: https://mist.example.com
       MIST_PUBLIC_ORIGIN: https://mist.example.ts.net
+      MIST_REQUIRE_IDENTITY: "true"
       MIST_GATEWAY_HOST: 127.0.0.1
       MIST_GATEWAY_PORT: 8788
       CF_ACCESS_CLIENT_ID: ${CF_ACCESS_CLIENT_ID}

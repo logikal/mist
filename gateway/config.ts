@@ -5,6 +5,7 @@ export interface GatewayConfig {
   port: number;
   cfAccessClientId?: string;
   cfAccessClientSecret?: string;
+  requireIdentity?: boolean;
 }
 
 function readOptional(env: NodeJS.ProcessEnv, name: string): string | undefined {
@@ -22,6 +23,16 @@ function readPort(env: NodeJS.ProcessEnv): number {
   }
 
   return port;
+}
+
+function readBoolean(env: NodeJS.ProcessEnv, name: string): boolean {
+  const raw = readOptional(env, name);
+  if (!raw) return false;
+
+  if (raw === "true" || raw === "1") return true;
+  if (raw === "false" || raw === "0") return false;
+
+  throw new Error(`${name} must be true or false`);
 }
 
 export function loadGatewayConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig {
@@ -52,5 +63,6 @@ export function loadGatewayConfig(env: NodeJS.ProcessEnv = process.env): Gateway
     port: readPort(env),
     cfAccessClientId: readOptional(env, "CF_ACCESS_CLIENT_ID"),
     cfAccessClientSecret: readOptional(env, "CF_ACCESS_CLIENT_SECRET"),
+    requireIdentity: readBoolean(env, "MIST_REQUIRE_IDENTITY"),
   };
 }

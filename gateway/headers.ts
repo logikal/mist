@@ -72,6 +72,10 @@ export function normalizeTailscaleIdentityHeaders(source: Headers): Headers {
   return target;
 }
 
+export function hasTailscaleIdentity(source: Headers): boolean {
+  return cleanHeaderValue(source.get("tailscale-user-login")) !== null;
+}
+
 function shouldStripHeader(name: string): boolean {
   const lower = name.toLowerCase();
   return (

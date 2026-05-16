@@ -110,6 +110,29 @@ describe("tailnet gateway proxy", () => {
     expect(observed.headers?.["tailscale-user-login"]).toBeUndefined();
   });
 
+  it("rejects HTTP requests without Tailscale identity when required", async () => {
+    let upstreamCalled = false;
+    const upstream = await listen(
+      http.createServer((_req, res) => {
+        upstreamCalled = true;
+        res.end("unexpected");
+      }),
+    );
+    const server = createGatewayServer({
+      upstreamOrigin: upstream,
+      host: "127.0.0.1",
+      port: 0,
+      requireIdentity: true,
+    });
+    const gatewayUrl = await listen(server);
+
+    const res = await fetch(new URL("/new", gatewayUrl), { method: "POST" });
+
+    expect(res.status).toBe(401);
+    expect(await res.text()).toBe("tailscale identity required\n");
+    expect(upstreamCalled).toBe(false);
+  });
+
   it("proxies WebSocket upgrades with identity and service token headers", async () => {
     let observedHeaders: http.IncomingHttpHeaders | undefined;
     const upstreamServer = http.createServer();
@@ -161,5 +184,44 @@ describe("tailnet gateway proxy", () => {
     expect(observedHeaders?.["cf-access-client-id"]).toBe("client-id");
     expect(observedHeaders?.["cf-access-client-secret"]).toBe("client-secret");
     expect(observedHeaders?.["tailscale-user-login"]).toBeUndefined();
+  });
+
+  it("rejects WebSocket upgrades without Tailscale identity when required", async () => {
+    let upstreamCalled = false;
+    const upstreamServer = http.createServer();
+    upstreamServer.on("upgrade", (_req, socket) => {
+      upstreamCalled = true;
+      socket.end();
+    });
+    const upstream = await listen(upstreamServer);
+    const gateway = await listen(
+      createGatewayServer({
+        upstreamOrigin: upstream,
+        host: "127.0.0.1",
+        port: 0,
+        requireIdentity: true,
+      }),
+    );
+
+    const socket = net.connect(Number(gateway.port), gateway.hostname);
+    await once(socket, "connect");
+    socket.write(
+      "GET /agents/document-agent/abcd1234 HTTP/1.1\r\n" +
+        `Host: ${gateway.host}\r\n` +
+        "Connection: Upgrade\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+        "Sec-WebSocket-Version: 13\r\n" +
+        "\r\n",
+    );
+
+    const chunks: Buffer[] = [];
+    socket.on("data", (chunk) => chunks.push(chunk));
+    await once(socket, "end");
+
+    const response = Buffer.concat(chunks).toString("utf8");
+    expect(response).toContain("401 Unauthorized");
+    expect(response).toContain("tailscale identity required");
+    expect(upstreamCalled).toBe(false);
   });
 });

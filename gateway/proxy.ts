@@ -3,7 +3,7 @@ import https from "node:https";
 import { Readable } from "node:stream";
 import type { Duplex } from "node:stream";
 import type { GatewayConfig } from "./config.js";
-import { buildUpstreamHeaders } from "./headers.js";
+import { buildUpstreamHeaders, hasTailscaleIdentity } from "./headers.js";
 
 type FetchInit = RequestInit & { duplex?: "half" };
 
@@ -59,9 +59,16 @@ export async function proxyHttpRequest(
   config: GatewayConfig,
 ): Promise<void> {
   try {
+    const incomingHeaders = incomingHeadersToHeaders(req.headers);
+    if (config.requireIdentity && !hasTailscaleIdentity(incomingHeaders)) {
+      res.writeHead(401, { "content-type": "text/plain" });
+      res.end("tailscale identity required\n");
+      return;
+    }
+
     const target = buildUpstreamUrl(req.url ?? "/", config.upstreamOrigin);
     const method = req.method ?? "GET";
-    const headers = buildUpstreamHeaders(incomingHeadersToHeaders(req.headers), config);
+    const headers = buildUpstreamHeaders(incomingHeaders, config);
     const init: FetchInit = {
       method,
       headers,
@@ -99,8 +106,19 @@ export function proxyWebSocketUpgrade(
   head: Buffer,
   config: GatewayConfig,
 ): void {
+  const incomingHeaders = incomingHeadersToHeaders(req.headers);
+  if (config.requireIdentity && !hasTailscaleIdentity(incomingHeaders)) {
+    socket.end(
+      "HTTP/1.1 401 Unauthorized\r\n" +
+        "content-type: text/plain\r\n" +
+        "\r\n" +
+        "tailscale identity required\n",
+    );
+    return;
+  }
+
   const target = buildUpstreamUrl(req.url ?? "/", config.upstreamOrigin);
-  const headers = buildUpstreamHeaders(incomingHeadersToHeaders(req.headers), config);
+  const headers = buildUpstreamHeaders(incomingHeaders, config);
   headers.set("connection", "Upgrade");
   headers.set("upgrade", req.headers.upgrade ?? "websocket");
   headers.set("host", target.host);
