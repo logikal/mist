@@ -15,6 +15,10 @@ import * as Y from "yjs";
 import * as awarenessProtocol from "y-protocols/awareness";
 import { DOCUMENT_TTL_MS, DOC_FORMAT_VERSION } from "~/shared/constants";
 import type { DocumentMetadata } from "~/shared/document-metadata";
+import {
+  MAX_DOCUMENT_VERSIONS,
+  VERSION_AUTOSAVE_INTERVAL_MS,
+} from "~/shared/document-versions";
 import { YjsProvider } from "~/lib/yjs-provider";
 
 type TestDocumentVersionsResponse = {
@@ -42,6 +46,7 @@ let mockVersionRows: Array<{
 }>;
 let mockConnectionMap: Map<string, MockConnection>;
 let mockSetAlarm: ReturnType<typeof vi.fn>;
+let mockFailVersionInserts: boolean;
 
 vi.mock("agents", () => ({
   Agent: class MockAgent {
@@ -94,6 +99,9 @@ vi.mock("agents", () => ({
       }
 
       if (query.includes("insert into doc_versions")) {
+        if (mockFailVersionInserts) {
+          throw new Error("version storage unavailable");
+        }
         const [id, docId, createdAt, createdBy, reason, state] = values;
         if (state instanceof Uint8Array) {
           mockVersionRows.push({
@@ -218,6 +226,7 @@ describe("DocumentAgent", () => {
     mockVersionRows = [];
     mockConnectionMap = new Map();
     mockSetAlarm = vi.fn();
+    mockFailVersionInserts = false;
     nextConnId = 1;
 
     const mod = await import("../../../agents/document");
@@ -607,6 +616,43 @@ describe("DocumentAgent", () => {
         vi.useRealTimers();
       }
     });
+
+    it("continues live collaboration when autosave snapshot storage fails", async () => {
+      await agent.onRequest(new Request("https://do/", { method: "POST" }));
+      const a = connectYjsClient();
+      const b = connectYjsClient();
+      mockFailVersionInserts = true;
+
+      a.doc.getText("default").insert(0, "still live");
+
+      expect(b.doc.getText("default").toString()).toBe("still live");
+      const res = await agent.onRequest(new Request("https://do/versions"));
+      const body = (await res.json()) as TestDocumentVersionsResponse;
+      expect(body.versions).toEqual([]);
+      cleanup(a, b);
+    });
+
+    it("prunes autosave versions to the configured maximum", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(1_000_000);
+      try {
+        await agent.onRequest(new Request("https://do/", { method: "POST" }));
+        const client = connectYjsClient();
+        const text = client.doc.getText("default");
+
+        for (let i = 0; i < MAX_DOCUMENT_VERSIONS + 1; i++) {
+          vi.setSystemTime(1_000_000 + i * (VERSION_AUTOSAVE_INTERVAL_MS + 1));
+          text.insert(text.length, `${i} `);
+        }
+
+        const res = await agent.onRequest(new Request("https://do/versions"));
+        const body = (await res.json()) as TestDocumentVersionsResponse;
+        expect(body.versions).toHaveLength(MAX_DOCUMENT_VERSIONS);
+        cleanup(client);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   /* ================================================================ */
@@ -649,6 +695,28 @@ describe("DocumentAgent", () => {
       await agent.alarm();
 
       expect(mockSqlStore.size).toBe(0);
+    });
+
+    it("clears expired ttl document versions", async () => {
+      await agent.onRequest(
+        new Request("https://do/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ retention: { mode: "ttl", expiresAt: Date.now() - 1 } }),
+        }),
+      );
+      const client = connectYjsClient();
+      client.doc.getText("default").insert(0, "temporary draft");
+      cleanup(client);
+      const versionsBefore = (await agent.onRequest(new Request("https://do/versions")));
+      expect(((await versionsBefore.json()) as TestDocumentVersionsResponse).versions)
+        .toHaveLength(1);
+
+      await agent.alarm();
+
+      const versionsAfter = await agent.onRequest(new Request("https://do/versions"));
+      expect(((await versionsAfter.json()) as TestDocumentVersionsResponse).versions)
+        .toEqual([]);
     });
 
     it("keeps unexpired ttl document data", async () => {

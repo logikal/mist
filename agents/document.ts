@@ -98,7 +98,11 @@ class DocumentAgent extends Agent {
       `;
       const now = Date.now();
       this.touchMetadata(now);
-      this.maybeAutosaveSnapshot(now);
+      try {
+        this.maybeAutosaveSnapshot(now);
+      } catch {
+        // Version snapshots are best-effort; live collaboration wins.
+      }
     });
 
     return { doc: this.doc, awareness: this.awareness };
@@ -356,6 +360,8 @@ class DocumentAgent extends Agent {
       return;
     }
 
+    this.ensureInitialised();
+    this.sql`DELETE FROM doc_versions`;
     this.sql`DELETE FROM doc_state`;
     for (const conn of this.getConnections()) {
       conn.close(1000, "Document expired");
