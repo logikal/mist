@@ -2,8 +2,8 @@ import http from "node:http";
 import https from "node:https";
 import { Readable } from "node:stream";
 import type { Duplex } from "node:stream";
-import type { GatewayConfig } from "./config";
-import { buildUpstreamHeaders } from "./headers";
+import type { GatewayConfig } from "./config.js";
+import { buildUpstreamHeaders } from "./headers.js";
 
 type FetchInit = RequestInit & { duplex?: "half" };
 
@@ -83,7 +83,7 @@ export async function proxyHttpRequest(
       return;
     }
 
-    Readable.fromWeb(upstreamRes.body).pipe(res);
+    Readable.fromWeb(upstreamRes.body as unknown as import("node:stream/web").ReadableStream).pipe(res);
   } catch (error) {
     console.error("mist gateway HTTP proxy error", error);
     if (!res.headersSent) {

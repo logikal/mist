@@ -12,7 +12,9 @@
 		"preview": "npm run build && vite preview",
 		"test": "vitest run --coverage",
 		"test:watch": "vitest",
-		"typecheck": "npm run cf-typegen && react-router typegen && tsc -b"
+		"typecheck": "npm run cf-typegen && react-router typegen && tsc -b",
+		"gateway:build": "tsc -p tsconfig.gateway.json",
+		"gateway:start": "node dist/gateway/server.js"
 	},
 	"dependencies": {
 		"@radix-ui/react-dropdown-menu": "^2.1.16",

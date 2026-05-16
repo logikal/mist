@@ -1,7 +1,7 @@
 import http from "node:http";
 import { pathToFileURL } from "node:url";
-import { loadGatewayConfig, type GatewayConfig } from "./config";
-import { proxyHttpRequest, proxyWebSocketUpgrade } from "./proxy";
+import { loadGatewayConfig, type GatewayConfig } from "./config.js";
+import { proxyHttpRequest, proxyWebSocketUpgrade } from "./proxy.js";
 
 export function createGatewayServer(config: GatewayConfig): http.Server {
   const server = http.createServer((req, res) => {
