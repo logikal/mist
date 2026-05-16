@@ -3,8 +3,10 @@ import {
   createDocumentMetadata,
   forwardMistIdentityHeaders,
   getOwnerFromHeaders,
+  hasOwnerIdentity,
   isExpired,
   normalizeRetention,
+  ownerMatchesIdentity,
 } from "~/shared/document-metadata";
 
 describe("document metadata helpers", () => {
@@ -125,5 +127,37 @@ describe("document metadata helpers", () => {
     expect(target.get("x-mist-user-name")).toBe("Sean");
     expect(target.get("x-mist-admin")).toBeNull();
     expect(target.get("authorization")).toBeNull();
+  });
+
+  it("reports whether an owner has any identity value", () => {
+    expect(hasOwnerIdentity({ id: null, login: null, name: null })).toBe(false);
+    expect(hasOwnerIdentity({ id: null, login: "sean@example.com", name: null }))
+      .toBe(true);
+  });
+
+  it("matches owners by stable identity before display name", () => {
+    const owner = {
+      id: "u-123",
+      login: "sean@example.com",
+      name: "Sean",
+    };
+
+    expect(ownerMatchesIdentity(owner, {
+      id: null,
+      login: "sean@example.com",
+      name: null,
+    })).toBe(true);
+    expect(ownerMatchesIdentity(owner, {
+      id: null,
+      login: null,
+      name: "Sean",
+    })).toBe(false);
+  });
+
+  it("falls back to display name only for name-only owners", () => {
+    expect(ownerMatchesIdentity(
+      { id: null, login: null, name: "Sean" },
+      { id: null, login: null, name: "Sean" },
+    )).toBe(true);
   });
 });

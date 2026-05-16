@@ -132,4 +132,31 @@ describe("Home", () => {
     ) as { content: string };
     expect(requestBody.content).not.toMatch(/auto-delete|ephemeral|99 hours/i);
   });
+
+  it("removes an owned document from the list after deletion", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn(() => true));
+
+    const { getByRole, queryByText } = render(
+      createElement(Home, {
+        loaderData: {
+          origin: "https://mist.example.com",
+          owner: documentSummary.owner,
+          documents: [documentSummary],
+        },
+        params: {},
+        matches: [],
+      } as never),
+    );
+
+    fireEvent.click(getByRole("button", { name: "Delete doc-1" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/agents/document-agent/doc-1",
+      { method: "DELETE" },
+    );
+    await waitFor(() => expect(queryByText("doc-1")).toBeNull());
+  });
 });

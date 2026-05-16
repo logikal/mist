@@ -15,7 +15,7 @@ Everything is public by URL. Documents persist live with no save button. Multipl
 - **Drag and drop** `.md` files to create new documents
 - **Persistent documents by default**, with optional TTL retention for temporary docs
 - **Autosaved and manual versions** for restoring earlier drafts
-- **Owner discovery** when served behind the Tailscale gateway
+- **Owner discovery and deletion** when served behind the Tailscale gateway
 - **Dark/light/auto themes**
 
 ## Tech stack

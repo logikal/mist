@@ -1,8 +1,9 @@
 import { Agent } from "agents";
 import {
   getOwnerFromHeaders,
+  hasOwnerIdentity,
+  ownerMatchesIdentity,
   type DocumentMetadata,
-  type DocumentOwner,
   type DocumentRetention,
 } from "../app/shared/document-metadata";
 import type {
@@ -45,32 +46,6 @@ class DocumentIndexAgent extends Agent {
     return url.pathname;
   }
 
-  private static hasIdentity(owner: DocumentOwner): boolean {
-    return Boolean(owner.id || owner.login || owner.name);
-  }
-
-  private static ownerMatches(
-    documentOwner: DocumentOwner,
-    requestOwner: DocumentOwner,
-  ): boolean {
-    const requestStableKeys = new Set(
-      [requestOwner.id, requestOwner.login].filter(Boolean),
-    );
-    const documentStableKeys = [documentOwner.id, documentOwner.login].filter(
-      Boolean,
-    );
-
-    if (requestStableKeys.size > 0 || documentStableKeys.length > 0) {
-      return documentStableKeys.some((value) => requestStableKeys.has(value));
-    }
-
-    return Boolean(
-      documentOwner.name &&
-        requestOwner.name &&
-        documentOwner.name === requestOwner.name,
-    );
-  }
-
   private readAllDocuments(): DocumentIndexEntry[] {
     this.ensureInitialised();
     const rows = this.sql<{
@@ -109,9 +84,9 @@ class DocumentIndexAgent extends Agent {
 
   private listDocumentsFor(request: Request): Response {
     const owner = getOwnerFromHeaders(request.headers);
-    const documents = DocumentIndexAgent.hasIdentity(owner)
+    const documents = hasOwnerIdentity(owner)
       ? this.readAllDocuments().filter((document) =>
-          DocumentIndexAgent.ownerMatches(document.owner, owner),
+          ownerMatchesIdentity(document.owner, owner),
         )
       : [];
     const body: DocumentIndexListResponse = { documents };

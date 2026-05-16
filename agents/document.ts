@@ -9,8 +9,10 @@ import { MSG_SYNC, MSG_AWARENESS, DOCUMENT_TTL_MS, DOC_FORMAT_VERSION } from "..
 import {
   createDocumentMetadata,
   getOwnerFromHeaders,
+  hasOwnerIdentity,
   isExpired,
   normalizeRetention,
+  ownerMatchesIdentity,
   type DocumentMetadata,
 } from "../app/shared/document-metadata";
 import { DOCUMENT_INDEX_AGENT_NAME } from "../app/shared/document-index";
@@ -243,6 +245,41 @@ class DocumentAgent extends Agent {
     }
   }
 
+  private clearStoredDocument(closeReason: string): void {
+    this.sql`DELETE FROM doc_versions`;
+    this.sql`DELETE FROM doc_state`;
+    for (const conn of this.getConnections()) {
+      conn.close(1000, closeReason);
+    }
+    this.doc?.destroy();
+    this.doc = null;
+    this.awareness = null;
+    this.lastAutosaveAt = 0;
+  }
+
+  private async deleteDocument(request: Request): Promise<Response> {
+    const metadata = this.readMetadata();
+    if (!metadata) {
+      return new Response("Document not found", { status: 404 });
+    }
+
+    const requestOwner = getOwnerFromHeaders(request.headers);
+    if (
+      (hasOwnerIdentity(metadata.owner) || hasOwnerIdentity(requestOwner)) &&
+      !ownerMatchesIdentity(metadata.owner, requestOwner)
+    ) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    this.ensureInitialised();
+    await this.removeDocumentFromIndex(this.documentId);
+    this.clearStoredDocument("Document deleted");
+
+    return new Response(JSON.stringify({ ok: true }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   private restoreVersion(versionId: string, request: Request): Response {
     this.ensureInitialised();
     const rows = this.sql<{ state: ArrayBuffer }>`
@@ -438,19 +475,16 @@ class DocumentAgent extends Agent {
 
     this.ensureInitialised();
     await this.removeDocumentFromIndex(this.documentId);
-    this.sql`DELETE FROM doc_versions`;
-    this.sql`DELETE FROM doc_state`;
-    for (const conn of this.getConnections()) {
-      conn.close(1000, "Document expired");
-    }
-    this.doc?.destroy();
-    this.doc = null;
-    this.awareness = null;
+    this.clearStoredDocument("Document expired");
   };
 
   async onRequest(request: Request) {
     const pathname = this.getRequestPathname(request);
     const restoreMatch = pathname.match(/^\/versions\/([^/]+)\/restore$/);
+
+    if (request.method === "DELETE" && pathname === "/") {
+      return this.deleteDocument(request);
+    }
 
     if (request.method === "GET" && pathname === "/versions") {
       const body: DocumentVersionsResponse = {

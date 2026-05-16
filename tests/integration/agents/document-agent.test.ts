@@ -560,6 +560,97 @@ describe("DocumentAgent", () => {
   });
 
   /* ================================================================ */
+  /*  HTTP DELETE                                                      */
+  /* ================================================================ */
+
+  describe("DELETE /", () => {
+    it("deletes document state for the matching owner identity", async () => {
+      await agent.onRequest(
+        new Request("https://do/", {
+          method: "POST",
+          headers: {
+            "x-mist-user-id": "u-123",
+            "x-mist-user-login": "sean@example.com",
+            "x-mist-user-name": "Sean",
+          },
+        }),
+      );
+      await agent.onRequest(
+        new Request("https://do/versions", { method: "POST" }),
+      );
+      const conn = createConnection();
+      mockIndexFetch.mockClear();
+
+      const res = await agent.onRequest(
+        new Request("https://do/", {
+          method: "DELETE",
+          headers: { "x-mist-user-login": "sean@example.com" },
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+      expect(mockSqlStore.size).toBe(0);
+      expect(mockVersionRows).toEqual([]);
+      expect(conn.closed).toBe(true);
+      expect(conn.closeReason).toBe("Document deleted");
+      expect(mockIndexFetch).toHaveBeenCalledOnce();
+      const indexRequest = mockIndexFetch.mock.calls[0][0] as Request;
+      expect(indexRequest.method).toBe("DELETE");
+      expect(new URL(indexRequest.url).pathname).toBe("/documents/test-doc");
+    });
+
+    it("rejects deletes from a different stable identity", async () => {
+      await agent.onRequest(
+        new Request("https://do/", {
+          method: "POST",
+          headers: {
+            "x-mist-user-id": "u-123",
+            "x-mist-user-login": "sean@example.com",
+            "x-mist-user-name": "Sean",
+          },
+        }),
+      );
+      mockIndexFetch.mockClear();
+
+      const res = await agent.onRequest(
+        new Request("https://do/", {
+          method: "DELETE",
+          headers: { "x-mist-user-login": "alex@example.com" },
+        }),
+      );
+      const getRes = await agent.onRequest(new Request("https://do/"));
+      const body = (await getRes.json()) as { exists: boolean };
+
+      expect(res.status).toBe(403);
+      expect(body.exists).toBe(true);
+      expect(mockIndexFetch).not.toHaveBeenCalled();
+    });
+
+    it("does not delete a stable-owner document from display name alone", async () => {
+      await agent.onRequest(
+        new Request("https://do/", {
+          method: "POST",
+          headers: {
+            "x-mist-user-id": "u-123",
+            "x-mist-user-login": "sean@example.com",
+            "x-mist-user-name": "Sean",
+          },
+        }),
+      );
+
+      const res = await agent.onRequest(
+        new Request("https://do/", {
+          method: "DELETE",
+          headers: { "x-mist-user-name": "Sean" },
+        }),
+      );
+
+      expect(res.status).toBe(403);
+    });
+  });
+
+  /* ================================================================ */
   /*  Versions                                                        */
   /* ================================================================ */
 

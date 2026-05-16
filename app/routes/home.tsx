@@ -6,6 +6,7 @@ import { APP_NAME, generateDocumentId } from "~/shared/constants";
 import {
   forwardMistIdentityHeaders,
   getOwnerFromHeaders,
+  hasOwnerIdentity,
   type DocumentOwner,
 } from "~/shared/document-metadata";
 import {
@@ -18,10 +19,6 @@ import { getCloudflare } from "~/lib/cloudflare.server";
 import { deserializeThreads } from "~/lib/thread-serialization";
 import ThemeSelector from "~/components/ThemeSelector";
 import demoDocument from "./demo.md?raw";
-
-function hasOwnerIdentity(owner: DocumentOwner): boolean {
-  return Boolean(owner.id || owner.login || owner.name);
-}
 
 export function formatDocumentTime(updatedAt: number): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -75,11 +72,25 @@ export function meta(_args: Route.MetaArgs) {
   ];
 }
 
-export default function Home({ loaderData }: Route.ComponentProps) {
+type HomeProps = Route.ComponentProps & {
+  confirmDelete?: (document: DocumentIndexEntry) => boolean;
+};
+
+const defaultConfirmDelete = (document: DocumentIndexEntry) =>
+  window.confirm(`Delete ${document.id}?`);
+
+export default function Home({
+  loaderData,
+  confirmDelete = defaultConfirmDelete,
+}: HomeProps) {
   const { origin, owner, documents } = loaderData;
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [copied, setCopied] = useState(false);
+  const [ownedDocuments, setOwnedDocuments] =
+    useState<DocumentIndexEntry[]>(documents);
+  const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const curlCommand = `curl ${origin}/new -T file.md`;
 
@@ -98,6 +109,27 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       body: JSON.stringify({ content: body, threads, onboarding }),
     });
     navigate(`/docs/${id}`);
+  }
+
+  async function handleDeleteDocument(document: DocumentIndexEntry) {
+    if (!confirmDelete(document)) return;
+
+    setDeletingDocumentId(document.id);
+    setDeleteError(null);
+    try {
+      const res = await fetch(
+        `/agents/document-agent/${encodeURIComponent(document.id)}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) throw new Error("Delete failed");
+      setOwnedDocuments((current) =>
+        current.filter((item) => item.id !== document.id),
+      );
+    } catch {
+      setDeleteError("Could not delete document");
+    } finally {
+      setDeletingDocumentId(null);
+    }
   }
 
   const handleUpload = useCallback(
@@ -226,26 +258,44 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                 {owner.login ?? owner.name ?? owner.id}
               </span>
             </div>
-            {documents.length === 0 ? (
+            {deleteError && (
+              <div className="border-t border-border px-3 py-2 text-sm text-coral">
+                {deleteError}
+              </div>
+            )}
+            {ownedDocuments.length === 0 ? (
               <div className="border-t border-border py-5 text-center text-muted">
                 No documents yet
               </div>
             ) : (
               <div className="border-t border-border">
-                {documents.map((document) => (
-                  <a
+                {ownedDocuments.map((document) => (
+                  <div
                     key={document.id}
-                    href={`/docs/${document.id}`}
-                    className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-4 border-b border-border py-2 text-left transition-colors hover:text-coral"
-                    aria-label={document.id}
+                    className="grid grid-cols-[minmax(0,1fr)_auto] items-stretch border-b border-border"
                   >
-                    <span className="truncate font-mono text-sm">
-                      {document.id}
-                    </span>
-                    <span className="shrink-0 font-mono text-xs text-muted">
-                      {formatDocumentTime(document.updatedAt)}
-                    </span>
-                  </a>
+                    <a
+                      href={`/docs/${document.id}`}
+                      className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-4 py-2 pr-3 text-left transition-colors hover:text-coral"
+                      aria-label={document.id}
+                    >
+                      <span className="truncate font-mono text-sm">
+                        {document.id}
+                      </span>
+                      <span className="shrink-0 font-mono text-xs text-muted">
+                        {formatDocumentTime(document.updatedAt)}
+                      </span>
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteDocument(document)}
+                      disabled={deletingDocumentId === document.id}
+                      className="cursor-pointer border-l border-border px-3 text-xs uppercase tracking-wider text-muted transition-colors hover:bg-border hover:text-ink disabled:cursor-default disabled:opacity-50"
+                      aria-label={`Delete ${document.id}`}
+                    >
+                      Delete
+                    </button>
+                  </div>
                 ))}
               </div>
             )}

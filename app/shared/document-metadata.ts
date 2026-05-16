@@ -51,6 +51,32 @@ export function forwardMistIdentityHeaders(target: Headers, source: Headers): vo
   }
 }
 
+export function hasOwnerIdentity(owner: DocumentOwner): boolean {
+  return Boolean(owner.id || owner.login || owner.name);
+}
+
+export function ownerMatchesIdentity(
+  documentOwner: DocumentOwner,
+  requestOwner: DocumentOwner,
+): boolean {
+  const requestStableKeys = new Set(
+    [requestOwner.id, requestOwner.login].filter(Boolean),
+  );
+  const documentStableKeys = [documentOwner.id, documentOwner.login].filter(
+    Boolean,
+  );
+
+  if (requestStableKeys.size > 0 || documentStableKeys.length > 0) {
+    return documentStableKeys.some((value) => requestStableKeys.has(value));
+  }
+
+  return Boolean(
+    documentOwner.name &&
+      requestOwner.name &&
+      documentOwner.name === requestOwner.name,
+  );
+}
+
 export function normalizeRetention(input: unknown, now: number): DocumentRetention {
   if (!input || typeof input !== "object") {
     return { mode: "persistent" };
