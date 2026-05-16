@@ -25,6 +25,7 @@ export default tseslint.config(
   {
     ignores: [
       "build/**",
+      "dist/**",
       ".react-router/**",
       ".wrangler/**",
       "node_modules/**",
