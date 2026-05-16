@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   matchThreadsToComments,
   findOrphanedThreads,
+  shouldClearThreadSidecarState,
   type DocumentComment,
 } from "~/lib/comment-threads";
 import type { ThreadData } from "~/shared/types";
@@ -97,5 +98,40 @@ describe("findOrphanedThreads", () => {
     const threads = [makeThread({ id: "t1" }), makeThread({ id: "t2" })];
     const orphans = findOrphanedThreads(threads, []);
     expect(orphans).toHaveLength(2);
+  });
+});
+
+describe("shouldClearThreadSidecarState", () => {
+  it("clears sidecar thread records after a previously-commented document is blanked", () => {
+    expect(
+      shouldClearThreadSidecarState({
+        comments: [],
+        documentText: "",
+        hasSeenComments: true,
+        threadCount: 3,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not clear sidecar records before comment marks have synced", () => {
+    expect(
+      shouldClearThreadSidecarState({
+        comments: [],
+        documentText: "",
+        hasSeenComments: false,
+        threadCount: 3,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not clear sidecar records while document text remains", () => {
+    expect(
+      shouldClearThreadSidecarState({
+        comments: [],
+        documentText: "new draft",
+        hasSeenComments: true,
+        threadCount: 3,
+      }),
+    ).toBe(false);
   });
 });

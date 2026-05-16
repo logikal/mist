@@ -127,3 +127,22 @@ export function findOrphanedThreads(
     .filter((t) => t.position === undefined)
     .map(({ position: _, ...rest }) => rest);
 }
+
+export function shouldClearThreadSidecarState({
+  comments,
+  documentText,
+  hasSeenComments,
+  threadCount,
+}: {
+  comments: DocumentComment[];
+  documentText: string;
+  hasSeenComments: boolean;
+  threadCount: number;
+}): boolean {
+  return (
+    hasSeenComments &&
+    threadCount > 0 &&
+    comments.length === 0 &&
+    documentText.trim().length === 0
+  );
+}

@@ -4,6 +4,7 @@ import type { ThreadData, ThreadReply, UserInfo } from "~/shared/types";
 import {
   scanDocumentComments,
   matchThreadsToComments,
+  shouldClearThreadSidecarState,
   type MatchedThread,
 } from "~/lib/comment-threads";
 
@@ -38,6 +39,7 @@ export function useThreads({
   const pendingActivateRef = useRef<string | null>(null);
   const reconcilingRef = useRef(false);
   const suppressSelectionRef = useRef(false);
+  const hasSeenCommentsRef = useRef(false);
 
   // Reconcile: scan document marks, auto-create Y.Map entries for new comments,
   // then match all threads to positions and update state
@@ -46,6 +48,32 @@ export function useThreads({
 
     const comments = scanDocumentComments(editor);
     const allThreads = readAllThreads(threadsMapRef.current);
+
+    if (comments.length > 0) {
+      hasSeenCommentsRef.current = true;
+    }
+
+    if (
+      shouldClearThreadSidecarState({
+        comments,
+        documentText: editor.state.doc.textContent,
+        hasSeenComments: hasSeenCommentsRef.current,
+        threadCount: allThreads.length,
+      })
+    ) {
+      reconcilingRef.current = true;
+      for (const key of Array.from(threadsMapRef.current.keys())) {
+        threadsMapRef.current.delete(key);
+      }
+      const docState = doc.getMap<string>("docState");
+      docState.delete("onboarding");
+      docState.set("mode", "edit");
+      reconcilingRef.current = false;
+      setThreads([]);
+      setActiveThreadId(null);
+      hasSeenCommentsRef.current = false;
+      return;
+    }
 
     // Match existing threads to comments
     const sorted = [...allThreads].sort((a, b) => a.createdAt - b.createdAt);
@@ -107,7 +135,7 @@ export function useThreads({
     } catch {
       setThreads(finalThreads.map((t) => ({ ...t, position: undefined })));
     }
-  }, [editor, user]);
+  }, [doc, editor, user]);
 
   // Observe Y.Map changes (from remote clients)
   useEffect(() => {
