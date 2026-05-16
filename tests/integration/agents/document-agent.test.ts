@@ -17,11 +17,29 @@ import { DOCUMENT_TTL_MS, DOC_FORMAT_VERSION } from "~/shared/constants";
 import type { DocumentMetadata } from "~/shared/document-metadata";
 import { YjsProvider } from "~/lib/yjs-provider";
 
+type TestDocumentVersionsResponse = {
+  versions: Array<{
+    id: string;
+    docId: string;
+    createdAt: number;
+    createdBy: string | null;
+    reason: "autosave" | "manual" | "restore";
+  }>;
+};
+
 /* ------------------------------------------------------------------ */
 /*  Mock Agent base class                                              */
 /* ------------------------------------------------------------------ */
 
 let mockSqlStore: Map<string, ArrayBuffer>;
+let mockVersionRows: Array<{
+  id: string;
+  docId: string;
+  createdAt: number;
+  createdBy: string | null;
+  reason: "autosave" | "manual" | "restore";
+  state: ArrayBuffer;
+}>;
 let mockConnectionMap: Map<string, MockConnection>;
 let mockSetAlarm: ReturnType<typeof vi.fn>;
 
@@ -42,8 +60,51 @@ vi.mock("agents", () => ({
 
       if (query.includes("create table")) return [];
 
+      if (query.includes("delete from doc_versions")) {
+        const limit = Number(values[0]);
+        if (Number.isFinite(limit) && limit > 0) {
+          mockVersionRows.splice(limit);
+        } else {
+          mockVersionRows = [];
+        }
+        return [];
+      }
+
       if (query.includes("delete from doc_state")) {
         mockSqlStore.clear();
+        return [];
+      }
+
+      if (query.includes("select") && query.includes("from doc_versions")) {
+        if (query.includes("state") && query.includes("where id")) {
+          const id = String(values[0]);
+          const version = mockVersionRows.find((row) => row.id === id);
+          return version ? [{ state: version.state }] : [];
+        }
+
+        return [...mockVersionRows]
+          .sort((a, b) => b.createdAt - a.createdAt)
+          .map(({ id, docId, createdAt, createdBy, reason }) => ({
+            id,
+            docId,
+            createdAt,
+            createdBy,
+            reason,
+          }));
+      }
+
+      if (query.includes("insert into doc_versions")) {
+        const [id, docId, createdAt, createdBy, reason, state] = values;
+        if (state instanceof Uint8Array) {
+          mockVersionRows.push({
+            id: String(id),
+            docId: String(docId),
+            createdAt: Number(createdAt),
+            createdBy: createdBy === null ? null : String(createdBy),
+            reason: reason as "autosave" | "manual" | "restore",
+            state: state.buffer.slice(state.byteOffset, state.byteOffset + state.byteLength),
+          });
+        }
         return [];
       }
 
@@ -154,6 +215,7 @@ describe("DocumentAgent", () => {
   beforeEach(async () => {
     vi.stubGlobal("WebSocket", MockSocket);
     mockSqlStore = new Map();
+    mockVersionRows = [];
     mockConnectionMap = new Map();
     mockSetAlarm = vi.fn();
     nextConnId = 1;
@@ -450,6 +512,100 @@ describe("DocumentAgent", () => {
       const getRes = await agent.onRequest(new Request("https://do/"));
       const body = (await getRes.json()) as { exists: boolean };
       expect(body.exists).toBe(true);
+    });
+  });
+
+  /* ================================================================ */
+  /*  Versions                                                        */
+  /* ================================================================ */
+
+  describe("versions", () => {
+    it("returns an empty version list before edits", async () => {
+      await agent.onRequest(new Request("https://do/", { method: "POST" }));
+
+      const res = await agent.onRequest(new Request("https://do/versions"));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ versions: [] });
+    });
+
+    it("creates one autosave version after a live edit", async () => {
+      await agent.onRequest(new Request("https://do/", { method: "POST" }));
+      const client = connectYjsClient();
+
+      client.doc.getText("default").insert(0, "first draft");
+
+      const res = await agent.onRequest(new Request("https://do/versions"));
+      const body = (await res.json()) as TestDocumentVersionsResponse;
+      expect(body.versions).toHaveLength(1);
+      expect(body.versions[0]).toMatchObject({
+        docId: "test-doc",
+        createdBy: null,
+        reason: "autosave",
+      });
+      cleanup(client);
+    });
+
+    it("throttles autosave versions within the interval", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(1_000_000);
+      try {
+        await agent.onRequest(new Request("https://do/", { method: "POST" }));
+        const client = connectYjsClient();
+
+        client.doc.getText("default").insert(0, "a");
+        client.doc.getText("default").insert(1, "b");
+
+        const res = await agent.onRequest(new Request("https://do/versions"));
+        const body = (await res.json()) as TestDocumentVersionsResponse;
+        expect(body.versions).toHaveLength(1);
+        cleanup(client);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("restores a saved version and records a restore audit snapshot", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(1_000_000);
+      try {
+        await agent.onRequest(new Request("https://do/", { method: "POST" }));
+        const client = connectYjsClient();
+        const text = client.doc.getText("default");
+        text.insert(0, "first");
+        const versionRes = await agent.onRequest(new Request("https://do/versions"));
+        const version = ((await versionRes.json()) as TestDocumentVersionsResponse)
+          .versions[0];
+
+        vi.setSystemTime(1_061_000);
+        text.insert(5, " second");
+
+        const restoreRes = await agent.onRequest(
+          new Request(`https://do/versions/${version.id}/restore`, { method: "POST" }),
+        );
+
+        expect(restoreRes.status).toBe(200);
+        expect(await restoreRes.json()).toEqual({
+          ok: true,
+          restoredVersionId: version.id,
+        });
+        expect(client.connection.closed).toBe(true);
+        expect(client.connection.closeCode).toBe(1012);
+        expect(client.connection.closeReason).toBe("Document restored");
+
+        const versionsRes = await agent.onRequest(new Request("https://do/versions"));
+        const versions = ((await versionsRes.json()) as TestDocumentVersionsResponse)
+          .versions;
+        expect(versions.some((v) => v.reason === "restore")).toBe(true);
+
+        cleanup(client);
+        mockConnectionMap.clear();
+        const restoredAgent = new DocumentAgent({} as never, {} as never);
+        const restoredClient = connectYjsClient(restoredAgent);
+        expect(restoredClient.doc.getText("default").toString()).toBe("first");
+        cleanup(restoredClient);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
