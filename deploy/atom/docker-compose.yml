@@ -1,14 +1,51 @@
 name: mist
 
 services:
+  tailscale-mist:
+    image: tailscale/tailscale:latest
+    container_name: ts-mist
+    hostname: mist
+    environment:
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+      - TS_EXTRA_ARGS=--advertise-tags=tag:container,tag:funnel,tag:shared
+      - TS_SERVE_CONFIG=/config/serve.json
+    volumes:
+      - /zpool1/docker_configs/mist/tailscale:/var/lib/tailscale
+      - /zpool1/docker_configs/mist/tailscale-config:/config
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+      - sys_module
+    ports:
+      - "192.168.1.12:8788:8788"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /config
+        cat > /config/serve.json <<'EOF'
+        {
+          "TCP": { "443": { "HTTPS": true } },
+          "Web": {
+            "$${TS_CERT_DOMAIN}:443": {
+              "Handlers": { "/": { "Proxy": "http://127.0.0.1:8788" } }
+            }
+          }
+        }
+        EOF
+        exec /usr/local/bin/containerboot
+    restart: unless-stopped
+
   mist-worker:
     image: mist:atom-dev
+    depends_on:
+      - tailscale-mist
+    network_mode: service:tailscale-mist
     command: npm run dev -- --host 0.0.0.0 --port 8787
     environment:
       NODE_ENV: development
-      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: mist-worker
-    ports:
-      - "127.0.0.1:8787:8787"
+      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: mist.tail6a522.ts.net
     volumes:
       - /zpool1/docker_configs/mist/worker-state:/app/.wrangler
     restart: unless-stopped
@@ -16,15 +53,15 @@ services:
   mist-gateway:
     image: mist:atom-dev
     depends_on:
+      - tailscale-mist
       - mist-worker
+    network_mode: service:tailscale-mist
     command: npm run gateway:start
     environment:
       NODE_ENV: production
-      MIST_UPSTREAM_ORIGIN: http://mist-worker:8787
-      MIST_PUBLIC_ORIGIN: https://atom.tail6a522.ts.net
+      MIST_UPSTREAM_ORIGIN: http://127.0.0.1:8787
+      MIST_PUBLIC_ORIGIN: https://mist.tail6a522.ts.net
       MIST_REQUIRE_IDENTITY: "true"
       MIST_GATEWAY_HOST: 0.0.0.0
       MIST_GATEWAY_PORT: 8788
-    ports:
-      - "127.0.0.1:8788:8788"
     restart: unless-stopped

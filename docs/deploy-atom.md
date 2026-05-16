@@ -7,20 +7,27 @@ Cloudflare Worker service.
 
 ## Shape
 
-- Tailnet URL: `https://atom.tail6a522.ts.net/`
-- Tailscale Serve: atom host proxies HTTPS 443 to `http://127.0.0.1:8788`
+- Tailnet URL: `https://mist.tail6a522.ts.net/`
+- Tailscale sidecar: `ts-mist` owns the tailnet node named `mist` and serves
+  HTTPS 443 to `http://127.0.0.1:8788` inside the sidecar network namespace.
 - Portainer stack name: `mist`
 - Portainer endpoint id: `2`
 - Source checkout on atom: `/zpool1/docker_configs/mist/app`
 - Local Cloudflare dev storage: `/zpool1/docker_configs/mist/worker-state`
+- Tailscale sidecar state: `/zpool1/docker_configs/mist/tailscale`
+- Tailscale sidecar config: `/zpool1/docker_configs/mist/tailscale-config`
 - Backups: `/zpool1/docker_configs/mist/backups`
 
-The stack runs two services:
+The stack follows the same sidecar pattern as the n8n Portainer stack:
 
+- `tailscale-mist`: Tailscale container with hostname `mist`, persistent state,
+  and a generated `TS_SERVE_CONFIG`.
 - `mist-worker`: React Router dev server plus Cloudflare local Durable Object
-  storage. It listens on `127.0.0.1:8787` on atom.
+  storage. It shares the sidecar network namespace and listens on
+  `127.0.0.1:8787`.
 - `mist-gateway`: Node tailnet gateway with `MIST_REQUIRE_IDENTITY=true`. It
-  listens on `127.0.0.1:8788` on atom and proxies to `mist-worker`.
+  shares the sidecar network namespace, listens on `127.0.0.1:8788`, and proxies
+  to `mist-worker` over `http://127.0.0.1:8787`.
 
 ## Fresh Deploy
 
@@ -40,6 +47,8 @@ Prepare atom directories:
 ssh logikal@atom '
   sudo mkdir -p /zpool1/docker_configs/mist/app \
     /zpool1/docker_configs/mist/worker-state \
+    /zpool1/docker_configs/mist/tailscale \
+    /zpool1/docker_configs/mist/tailscale-config \
     /zpool1/docker_configs/mist/backups
   sudo chown -R logikal:logikal /zpool1/docker_configs/mist
 '
@@ -157,28 +166,52 @@ PY
 '
 ```
 
-## Tailscale Serve
+## Tailscale Sidecar
 
-Serve should point at the gateway:
+`tailscale-mist` writes the same sidecar-style `TS_SERVE_CONFIG` used by the n8n
+stack and serves the gateway from inside the shared network namespace. Unlike
+the n8n webhook use case, MIST keeps this endpoint tailnet-only by omitting the
+`AllowFunnel` serve setting. The expected tailnet name is
+`mist.tail6a522.ts.net`.
+
+On first boot with an empty `/zpool1/docker_configs/mist/tailscale` directory,
+the Tailscale container must be authenticated. Either add a temporary
+`TS_AUTHKEY` to the Portainer stack environment, or read the login URL from the
+`ts-mist` logs and approve it in Tailscale. After state exists on disk, remove
+the one-time auth material from the stack.
+
+The atom host-level Tailscale Serve config is not part of this deployment. If a
+previous host-level deployment pointed `atom.tail6a522.ts.net` at MIST, reset it
+after `mist.tail6a522.ts.net` is working:
 
 ```sh
-ssh logikal@atom 'tailscale serve --https=443 --bg http://127.0.0.1:8788'
-ssh logikal@atom 'tailscale serve status'
+ssh logikal@atom 'tailscale serve reset'
 ```
 
-Expected status:
+Check the sidecar state:
 
-```text
-https://atom.tail6a522.ts.net (tailnet only)
-|-- / proxy http://127.0.0.1:8788
+```sh
+ssh logikal@atom 'docker exec ts-mist tailscale status'
 ```
+
+If HTTPS initially returns a TLS internal error, check the sidecar logs for
+certificate issuance errors:
+
+```sh
+ssh logikal@atom 'docker logs --tail 120 ts-mist | grep -Ei "cert|SetDNS|TLS"'
+ssh logikal@atom 'docker exec ts-mist tailscale cert mist.tail6a522.ts.net'
+```
+
+During the first `mist` sidecar migration, Tailscale briefly returned
+`SetDNS ... 500 Internal Server Error` while creating the ACME TXT record. A
+later retry succeeded and Serve began returning HTTPS normally.
 
 ## Smoke Tests
 
 Health:
 
 ```sh
-curl -sS https://atom.tail6a522.ts.net/healthz
+curl -sS https://mist.tail6a522.ts.net/healthz
 ```
 
 Expected: `ok`.
@@ -186,7 +219,7 @@ Expected: `ok`.
 Identity gate:
 
 ```sh
-ssh logikal@atom 'curl -i -sS http://127.0.0.1:8788/ | head'
+ssh logikal@atom 'curl -i -sS http://192.168.1.12:8788/ | head'
 ```
 
 Expected: `401 Unauthorized` with `tailscale identity required`.
@@ -194,14 +227,14 @@ Expected: `401 Unauthorized` with `tailscale identity required`.
 Existing document:
 
 ```sh
-curl -sS https://atom.tail6a522.ts.net/agents/document-agent/oxn8nrqt/
+curl -sS https://mist.tail6a522.ts.net/agents/document-agent/oxn8nrqt/
 ```
 
 Expected: JSON metadata with `"name":"Customer incident"`.
 
 Browser:
 
-Open `https://atom.tail6a522.ts.net/docs/oxn8nrqt` and confirm the editor
+Open `https://mist.tail6a522.ts.net/docs/oxn8nrqt` and confirm the editor
 connects, the document name is visible, and version history is intact.
 
 ## Rollback
