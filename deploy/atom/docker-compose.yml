@@ -1,0 +1,30 @@
+name: mist
+
+services:
+  mist-worker:
+    image: mist:atom-dev
+    command: npm run dev -- --host 0.0.0.0 --port 8787
+    environment:
+      NODE_ENV: development
+      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: mist-worker
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - /zpool1/docker_configs/mist/worker-state:/app/.wrangler
+    restart: unless-stopped
+
+  mist-gateway:
+    image: mist:atom-dev
+    depends_on:
+      - mist-worker
+    command: npm run gateway:start
+    environment:
+      NODE_ENV: production
+      MIST_UPSTREAM_ORIGIN: http://mist-worker:8787
+      MIST_PUBLIC_ORIGIN: https://atom.tail6a522.ts.net
+      MIST_REQUIRE_IDENTITY: "true"
+      MIST_GATEWAY_HOST: 0.0.0.0
+      MIST_GATEWAY_PORT: 8788
+    ports:
+      - "127.0.0.1:8788:8788"
+    restart: unless-stopped

@@ -56,6 +56,10 @@ Protect the Worker route with Cloudflare Access and allow the gateway through a 
 
 ## Portainer Shape
 
+For the current atom deployment that keeps local Cloudflare dev storage on the
+same host, use [Atom Deployment Runbook](../docs/deploy-atom.md). The example
+below is the later gateway-only shape for a private Cloudflare Worker upstream.
+
 For an atom-style Portainer stack, run a Tailscale sidecar and the gateway in the sidecar network namespace:
 
 ```yaml
